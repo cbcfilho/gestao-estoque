@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Paleta — inspirada nas cores da marca (cacau/marrom + dourado).
+   Ajuste os tons aqui e todo o sistema acompanha.
+   ========================================================================== */
+
+@theme {
+  /* Marrom cacau — cor primária */
+  --color-cacau-50:  #FAF5F2;
+  --color-cacau-100: #F2E5DE;
+  --color-cacau-200: #E3C9BB;
+  --color-cacau-300: #CFA48F;
+  --color-cacau-400: #B37A5F;
+  --color-cacau-500: #91563C;
+  --color-cacau-600: #74402B;
+  --color-cacau-700: #5B2C20;
+  --color-cacau-800: #43201A;
+  --color-cacau-900: #2C1512;
+  --color-cacau-950: #1A0C0A;
+
+  /* Dourado — cor de destaque */
+  --color-dourado-50:  #FDF9EC;
+  --color-dourado-100: #F9F0CD;
+  --color-dourado-200: #F1DE96;
+  --color-dourado-300: #E7C75F;
+  --color-dourado-400: #DCB23A;
+  --color-dourado-500: #C9A227;
+  --color-dourado-600: #A87D1D;
+  --color-dourado-700: #855C1B;
+  --color-dourado-800: #6E4A1D;
+  --color-dourado-900: #5E3E1D;
+
+  /* Neutros levemente quentes, para combinar com o marrom */
+  --color-areia-50:  #FAF9F7;
+  --color-areia-100: #F4F2EE;
+  --color-areia-200: #E8E4DD;
+  --color-areia-300: #D6D0C5;
+  --color-areia-400: #B0A897;
+  --color-areia-500: #8A8172;
+  --color-areia-600: #6B6357;
+  --color-areia-700: #524B42;
+  --color-areia-800: #38332D;
+  --color-areia-900: #22201C;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-card: 0.75rem;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   Tokens semânticos — claro e escuro
+   ========================================================================== */
+
+@layer base {
+  :root {
+    --fundo: var(--color-areia-100);
+    --superficie: #ffffff;
+    --superficie-2: var(--color-areia-50);
+    --borda: var(--color-areia-200);
+    --texto: var(--color-areia-900);
+    --texto-suave: var(--color-areia-600);
+  }
+
+  .dark {
+    --fundo: var(--color-areia-900);
+    --superficie: #2A2724;
+    --superficie-2: #332F2B;
+    --borda: #443E38;
+    --texto: var(--color-areia-100);
+    --texto-suave: var(--color-areia-400);
+  }
+
+  * {
+    border-color: var(--borda);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--fundo);
+    color: var(--texto);
+    font-family: var(--font-sans);
+    /* respeita as áreas seguras do iPhone quando instalado como PWA */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Evita o zoom automático do iOS ao focar inputs — crítico para o uso em loja */
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1rem);
+  }
+}
+
+/* ==========================================================================
+   Utilitários compartilhados
+   ========================================================================== */
+
+@utility superficie {
+  background-color: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--radius-card);
+}
+
+@utility superficie-2 {
+  background-color: var(--superficie-2);
+}
+
+@utility texto-suave {
+  color: var(--texto-suave);
+}
+
+/* Números tabulares em quantidades e valores */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Barra de rolagem discreta (colunas do kanban, tabelas largas) */
+@utility scroll-discreto {
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--color-areia-300);
+    border-radius: 999px;
+  }
+}
+
+/* Impressão de relatórios */
+@media print {
+  .nao-imprimir {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}
