@@ -23,7 +23,8 @@ if (!email) {
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const site = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+// replace tira barras do final: com elas o link sairia com "//" no meio.
+const site = (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 
 if (!url || !service) {
   console.error("NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar no .env.local.");

@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 
+import { origemDoSite } from "@/lib/site";
 import { supabaseServidor } from "@/lib/supabase/server";
 import { mensagemErro } from "@/lib/utils";
 
@@ -65,10 +65,7 @@ export async function solicitarRecuperacao(
   const email = String(dados.get("email") ?? "").trim();
   if (!email) return { erro: "Informe o e-mail." };
 
-  const cabecalhos = await headers();
-  const origem =
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
+  const origem = await origemDoSite();
 
   const supabase = await supabaseServidor();
   await supabase.auth.resetPasswordForEmail(email, {

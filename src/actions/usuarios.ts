@@ -1,12 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { z } from "zod";
 
 import type { Resultado } from "@/actions/estoque";
 import { exigirPermissaoAction } from "@/lib/auth";
 import { PERMISSOES } from "@/lib/permissoes";
+import { origemDoSite } from "@/lib/site";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServidor } from "@/lib/supabase/server";
 import { mensagemErro } from "@/lib/utils";
@@ -70,10 +70,7 @@ export async function convidarUsuario(entrada: unknown): Promise<Resultado<Resul
       return { ok: false, erro: "Você não pode criar usuários com acesso a todas as filiais." };
     }
 
-    const cabecalhos = await headers();
-    const origem =
-      process.env.NEXT_PUBLIC_SITE_URL ??
-      `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
+    const origem = await origemDoSite();
 
     const admin = supabaseAdmin();
     const metadados = { nome: dados.nome, perfil: dados.perfil_chave };
@@ -189,10 +186,7 @@ export async function gerarLinkParaUsuario(email: string): Promise<Resultado<str
   try {
     await exigirPermissaoAction(PERMISSOES.usuariosGerenciar);
 
-    const cabecalhos = await headers();
-    const origem =
-      process.env.NEXT_PUBLIC_SITE_URL ??
-      `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
+    const origem = await origemDoSite();
 
     return { ok: true, dados: await gerarLinkAcesso(email, origem) };
   } catch (erro) {
