@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { FormularioLogin } from "./formulario";
+import { AvisoConfiguracao } from "@/components/aviso-configuracao";
 import { Marca } from "@/components/marca";
 import { Alerta } from "@/components/ui/estados";
 
@@ -34,6 +35,8 @@ export default async function PaginaLogin({
             {ERROS[erro]}
           </Alerta>
         )}
+
+        <AvisoConfiguracao />
 
         <div className="superficie p-5">
           <FormularioLogin redirecionar={redirecionar} />
