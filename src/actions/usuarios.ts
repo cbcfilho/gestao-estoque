@@ -18,14 +18,29 @@ const esquemaConvite = z.object({
   filiais: z.array(z.string().uuid()).default([]),
 });
 
+export interface ResultadoConvite {
+  usuarioId: string;
+  /** Link de definição de senha, para o gestor enviar por conta própria. */
+  link: string;
+  /** Falso quando o e-mail não pôde ser enviado (limite do Supabase, SMTP ausente). */
+  emailEnviado: boolean;
+  motivoEmail?: string;
+}
+
 /**
- * Convida um colaborador por e-mail.
+ * Cria o acesso de um colaborador.
+ *
+ * O envio de e-mail é o elo mais frágil dessa operação: o serviço compartilhado
+ * do Supabase libera poucas mensagens por hora e, sem SMTP próprio, o convite
+ * simplesmente não chega. Por isso o e-mail é tratado como um extra, não como
+ * requisito: o usuário é criado de qualquer forma e a função sempre devolve um
+ * link de definição de senha, que o gestor pode repassar por WhatsApp.
  *
  * Usa a service role porque criar usuário no Auth é operação administrativa —
- * por isso a permissão é conferida aqui, na primeira linha, antes de qualquer
- * chamada com a chave privilegiada.
+ * por isso a permissão é conferida na primeira linha, antes de qualquer chamada
+ * com a chave privilegiada.
  */
-export async function convidarUsuario(entrada: unknown): Promise<Resultado<string>> {
+export async function convidarUsuario(entrada: unknown): Promise<Resultado<ResultadoConvite>> {
   try {
     const sessao = await exigirPermissaoAction(PERMISSOES.usuariosGerenciar);
 
@@ -61,20 +76,50 @@ export async function convidarUsuario(entrada: unknown): Promise<Resultado<strin
       `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
 
     const admin = supabaseAdmin();
+    const metadados = { nome: dados.nome, perfil: dados.perfil_chave };
 
-    const { data: convite, error } = await admin.auth.admin.inviteUserByEmail(dados.email, {
-      data: { nome: dados.nome, perfil: dados.perfil_chave },
+    // 1) Tenta o convite por e-mail, que é o caminho mais confortável.
+    let usuarioId: string | null = null;
+    let emailEnviado = false;
+    let motivoEmail: string | undefined;
+
+    const convite = await admin.auth.admin.inviteUserByEmail(dados.email, {
+      data: metadados,
       redirectTo: `${origem}/auth/callback?proximo=/redefinir-senha`,
     });
 
-    if (error) {
-      if (error.message.toLowerCase().includes("already been registered")) {
+    if (!convite.error) {
+      usuarioId = convite.data.user.id;
+      emailEnviado = true;
+    } else {
+      const mensagem = String(convite.error.message ?? "").toLowerCase();
+
+      if (mensagem.includes("already been registered") || mensagem.includes("already exists")) {
         return { ok: false, erro: "Já existe um usuário com este e-mail." };
       }
-      return { ok: false, erro: mensagemErro(error) };
-    }
 
-    const usuarioId = convite.user.id;
+      motivoEmail = mensagem.includes("rate limit")
+        ? "O Supabase atingiu o limite de e-mails por hora."
+        : "O Supabase não conseguiu enviar o e-mail (SMTP não configurado).";
+
+      // 2) O e-mail falhou, mas o acesso não pode ficar refém disso: cria o
+      //    usuário direto, já com o e-mail confirmado.
+      const criacao = await admin.auth.admin.createUser({
+        email: dados.email,
+        email_confirm: true,
+        user_metadata: metadados,
+      });
+
+      if (criacao.error) {
+        const m = criacao.error.message.toLowerCase();
+        if (m.includes("already been registered") || m.includes("already exists")) {
+          return { ok: false, erro: "Já existe um usuário com este e-mail." };
+        }
+        return { ok: false, erro: mensagemErro(criacao.error) };
+      }
+
+      usuarioId = criacao.data.user.id;
+    }
 
     // O trigger já criou a linha em `usuarios`; aqui garantimos nome e perfil.
     await admin
@@ -84,22 +129,73 @@ export async function convidarUsuario(entrada: unknown): Promise<Resultado<strin
 
     if (dados.filiais.length > 0) {
       await admin.from("usuario_filiais").upsert(
-        dados.filiais.map((filialId) => ({ usuario_id: usuarioId, filial_id: filialId })),
+        dados.filiais.map((filialId) => ({ usuario_id: usuarioId!, filial_id: filialId })),
         { onConflict: "usuario_id,filial_id", ignoreDuplicates: true },
       );
     }
+
+    // 3) Gera o link de definição de senha sempre — serve tanto para o gestor
+    //    repassar agora quanto para reenviar depois.
+    const link = await gerarLinkAcesso(dados.email, origem);
 
     revalidatePath("/configuracoes/usuarios");
 
     return {
       ok: true,
-      dados: usuarioId,
-      mensagem: `Convite enviado para ${dados.email}.`,
+      dados: { usuarioId: usuarioId!, link, emailEnviado, motivoEmail },
+      mensagem: emailEnviado
+        ? `Convite enviado para ${dados.email}.`
+        : `Acesso criado para ${dados.email}. Envie o link abaixo para a pessoa.`,
     };
   } catch (erro) {
     if (erro instanceof z.ZodError) {
       return { ok: false, erro: erro.issues[0]?.message ?? "Dados inválidos." };
     }
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+/**
+ * Monta um link de definição de senha apontando para o próprio sistema.
+ *
+ * Não usamos o `action_link` que o Supabase devolve: ele entrega a sessão no
+ * fragmento da URL (#access_token), que nunca chega ao servidor. Com o
+ * token_hash, a rota /auth/callback troca pela sessão via verifyOtp — o mesmo
+ * caminho dos e-mails oficiais.
+ */
+async function gerarLinkAcesso(email: string, origem: string): Promise<string> {
+  const admin = supabaseAdmin();
+
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "recovery",
+    email,
+  });
+
+  if (error || !data.properties?.hashed_token) {
+    throw new Error("Não foi possível gerar o link de acesso.");
+  }
+
+  const params = new URLSearchParams({
+    token_hash: data.properties.hashed_token,
+    type: "recovery",
+    proximo: "/redefinir-senha",
+  });
+
+  return `${origem}/auth/callback?${params.toString()}`;
+}
+
+/** Gera um novo link de acesso para quem não recebeu (ou perdeu) o convite. */
+export async function gerarLinkParaUsuario(email: string): Promise<Resultado<string>> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.usuariosGerenciar);
+
+    const cabecalhos = await headers();
+    const origem =
+      process.env.NEXT_PUBLIC_SITE_URL ??
+      `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
+
+    return { ok: true, dados: await gerarLinkAcesso(email, origem) };
+  } catch (erro) {
     return { ok: false, erro: mensagemErro(erro) };
   }
 }
@@ -166,32 +262,6 @@ export async function atualizarUsuario(entrada: unknown): Promise<Resultado> {
     if (erro instanceof z.ZodError) {
       return { ok: false, erro: erro.issues[0]?.message ?? "Dados inválidos." };
     }
-    return { ok: false, erro: mensagemErro(erro) };
-  }
-}
-
-export async function reenviarConvite(email: string): Promise<Resultado> {
-  try {
-    await exigirPermissaoAction(PERMISSOES.usuariosGerenciar);
-
-    const cabecalhos = await headers();
-    const origem =
-      process.env.NEXT_PUBLIC_SITE_URL ??
-      `${cabecalhos.get("x-forwarded-proto") ?? "http"}://${cabecalhos.get("host")}`;
-
-    const supabase = await supabaseServidor();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${origem}/auth/callback?proximo=/redefinir-senha`,
-    });
-
-    if (error) return { ok: false, erro: mensagemErro(error) };
-
-    return {
-      ok: true,
-      dados: undefined,
-      mensagem: `Link de acesso reenviado para ${email}.`,
-    };
-  } catch (erro) {
     return { ok: false, erro: mensagemErro(erro) };
   }
 }

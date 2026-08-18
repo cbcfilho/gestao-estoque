@@ -1,16 +1,22 @@
 "use client";
 
-import { Mail, Pencil, UserPlus } from "lucide-react";
+import { KeyRound, Pencil, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { atualizarUsuario, convidarUsuario, reenviarConvite } from "@/actions/usuarios";
+import {
+  atualizarUsuario,
+  convidarUsuario,
+  gerarLinkParaUsuario,
+  type ResultadoConvite,
+} from "@/actions/usuarios";
 import { Badge } from "@/components/ui/badge";
 import { Botao } from "@/components/ui/botao";
 import { Campo, Checkbox, Selecao } from "@/components/ui/campo";
 import { Cartao } from "@/components/ui/cartao";
 import { Alerta } from "@/components/ui/estados";
+import { LinkAcesso } from "@/components/ui/link-acesso";
 import { Modal } from "@/components/ui/modal";
 import {
   ItemCartao,
@@ -42,6 +48,7 @@ export function GestaoUsuarios({
   const [pendente, iniciar] = useTransition();
   const [convidando, setConvidando] = useState(false);
   const [editando, setEditando] = useState<UsuarioListagem | null>(null);
+  const [linkGerado, setLinkGerado] = useState<{ nome: string; link: string } | null>(null);
 
   return (
     <>
@@ -116,14 +123,15 @@ export function GestaoUsuarios({
                         disabled={pendente}
                         onClick={() =>
                           iniciar(async () => {
-                            const r = await reenviarConvite(usuario.email);
-                            if (r.ok) toast.success(r.mensagem);
+                            const r = await gerarLinkParaUsuario(usuario.email);
+                            if (r.ok) setLinkGerado({ nome: usuario.nome, link: r.dados });
                             else toast.error(r.erro);
                           })
                         }
-                        aria-label={`Reenviar acesso para ${usuario.nome}`}
+                        title={`Gerar link de acesso para ${usuario.nome}`}
+                        aria-label={`Gerar link de acesso para ${usuario.nome}`}
                       >
-                        <Mail className="size-4" />
+                        <KeyRound className="size-4" />
                       </Botao>
                     </div>
                   </Td>
@@ -175,6 +183,21 @@ export function GestaoUsuarios({
         }}
       />
 
+      {linkGerado && (
+        <Modal
+          aberto
+          aoFechar={() => setLinkGerado(null)}
+          titulo="Link de acesso"
+          descricao={`Envie para ${linkGerado.nome} criar a própria senha.`}
+          tamanho="sm"
+          rodape={
+            <Botao onClick={() => setLinkGerado(null)}>Fechar</Botao>
+          }
+        >
+          <LinkAcesso link={linkGerado.link} nome={linkGerado.nome} />
+        </Modal>
+      )}
+
       {editando && (
         <ModalEdicao
           usuario={editando}
@@ -210,6 +233,7 @@ function ModalConvite({
   const [email, setEmail] = useState("");
   const [perfilChave, setPerfilChave] = useState(perfis[0]?.chave ?? "operador");
   const [selecionadas, setSelecionadas] = useState<string[]>([]);
+  const [criado, setCriado] = useState<ResultadoConvite | null>(null);
 
   const perfil = perfis.find((p) => p.chave === perfilChave);
   const precisaFiliais = perfil?.escopo !== "global";
@@ -229,11 +253,45 @@ function ModalConvite({
       }
 
       toast.success(r.mensagem);
-      setNome("");
-      setEmail("");
-      setSelecionadas([]);
-      aoConcluir();
+      setCriado(r.dados);
     });
+  }
+
+  function fecharEConcluir() {
+    setNome("");
+    setEmail("");
+    setSelecionadas([]);
+    setCriado(null);
+    aoConcluir();
+  }
+
+  // Depois de criado, a janela vira a entrega do link de acesso.
+  if (criado) {
+    return (
+      <Modal
+        aberto={aberto}
+        aoFechar={fecharEConcluir}
+        titulo="Acesso criado"
+        descricao={`${nome} já pode entrar assim que definir a senha.`}
+        tamanho="sm"
+        rodape={<Botao onClick={fecharEConcluir}>Concluir</Botao>}
+      >
+        <div className="flex flex-col gap-4">
+          {criado.emailEnviado ? (
+            <Alerta tom="sucesso" titulo="Convite enviado por e-mail">
+              Se não chegar em alguns minutos, use o link abaixo — vale igual.
+            </Alerta>
+          ) : (
+            <Alerta tom="alerta" titulo="O e-mail não pôde ser enviado">
+              {criado.motivoEmail} O acesso foi criado mesmo assim: envie o link abaixo
+              para a pessoa.
+            </Alerta>
+          )}
+
+          <LinkAcesso link={criado.link} nome={nome} />
+        </div>
+      </Modal>
+    );
   }
 
   return (
@@ -241,14 +299,14 @@ function ModalConvite({
       aberto={aberto}
       aoFechar={aoFechar}
       titulo="Convidar colaborador"
-      descricao="O colaborador recebe um e-mail para criar a própria senha."
+      descricao="O sistema cria o acesso e devolve um link para a pessoa definir a senha."
       rodape={
         <>
           <Botao variante="contorno" onClick={aoFechar} disabled={pendente}>
             Cancelar
           </Botao>
           <Botao onClick={enviar} carregando={pendente}>
-            Enviar convite
+            Criar acesso
           </Botao>
         </>
       }
@@ -307,9 +365,10 @@ function ModalConvite({
           </Alerta>
         )}
 
-        <Alerta tom="alerta" titulo="O convite depende do envio de e-mail">
-          O Supabase envia esses e-mails por um serviço compartilhado com limite baixo de mensagens.
-          Para uso real, configure um SMTP próprio em Authentication → Emails.
+        <Alerta tom="info" titulo="Como a pessoa recebe o acesso">
+          O sistema tenta enviar um e-mail e, dando certo ou não, sempre mostra um link
+          que você pode repassar por WhatsApp. Enquanto não houver um SMTP próprio
+          configurado no Supabase, o link é o caminho confiável.
         </Alerta>
       </div>
     </Modal>

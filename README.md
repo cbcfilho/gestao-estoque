@@ -159,6 +159,50 @@ O último regenera os ícones do PWA — rode se trocar o símbolo da marca.
 Se o servidor já estiver rodando e você mudar o `.env.local`, o Next recarrega
 sozinho (aparece `Reload env: .env.local` no terminal). Não precisa reiniciar.
 
+### Se o PowerShell recusar o comando `npm`
+
+No Windows, o PowerShell bloqueia scripts por padrão e o `npm` é um script
+(`npm.ps1`). O erro é este:
+
+```
+npm : O arquivo C:\Program Files\nodejs\npm.ps1 não pode ser carregado porque
+a execução de scripts foi desabilitada neste sistema.
+```
+
+Não é problema do projeto. Três saídas, da mais simples para a mais definitiva:
+
+**1. Acrescente `.cmd` ao comando** — resolve na hora, sem mudar nada no sistema:
+
+```powershell
+npm.cmd run vars
+```
+
+Vale para todos: `npm.cmd install`, `npm.cmd run dev`, `npm.cmd run build`.
+
+**2. Use o Prompt de Comando** em vez do PowerShell. Tecle `Win+R`, digite `cmd`,
+vá até a pasta do projeto e os comandos `npm` funcionam sem sufixo:
+
+```
+cd C:\Users\Christian\Documents\Projetos\gestao_estoque
+```
+
+**3. Libere scripts assinados para o seu usuário.** É uma configuração de
+segurança do Windows — decida com consciência. Ela permite rodar scripts locais e
+scripts baixados que tenham assinatura digital, só para o seu usuário, sem exigir
+administrador:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Para conferir como está antes de mudar:
+
+```powershell
+Get-ExecutionPolicy -Scope CurrentUser
+```
+
+`Undefined` significa que vale o padrão do Windows, que é bloquear.
+
 ---
 ## 3. Publicar na internet
 
@@ -313,10 +357,23 @@ curl -H "Authorization: Bearer SEU_CRON_SECRET" https://seu-endereco.vercel.app/
 A partir daqui, publicar uma mudança é só:
 
 ```bash
-git add -A && git commit -m "descricao da mudanca" && git push
+git add -A
+```
+
+```bash
+git commit -m "descricao da mudanca"
+```
+
+```bash
+git push
 ```
 
 A Vercel percebe o push e republica sozinha em poucos minutos.
+
+> **Um comando por linha, de propósito.** O PowerShell que vem com o Windows
+> (versão 5.1) não aceita `&&` para encadear comandos — devolve *"O token '&&'
+> não é um separador de instruções válido nesta versão"*. No Prompt de Comando
+> e no PowerShell 7+ o `&&` funciona normalmente.
 
 ### 3.9 Notificações push (opcional)
 
