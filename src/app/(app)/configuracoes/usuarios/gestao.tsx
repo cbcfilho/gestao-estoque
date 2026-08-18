@@ -277,18 +277,21 @@ function ModalConvite({
         rodape={<Botao onClick={fecharEConcluir}>Concluir</Botao>}
       >
         <div className="flex flex-col gap-4">
-          {criado.emailEnviado ? (
-            <Alerta tom="sucesso" titulo="Convite enviado por e-mail">
-              Se não chegar em alguns minutos, use o link abaixo — vale igual.
-            </Alerta>
+          {criado.link ? (
+            <>
+              <Alerta tom="sucesso" titulo="Falta só a senha">
+                Envie o link abaixo para a pessoa — ao abrir, ela escolhe a própria senha
+                e já cai dentro do sistema.
+              </Alerta>
+
+              <LinkAcesso link={criado.link} nome={nome} />
+            </>
           ) : (
-            <Alerta tom="alerta" titulo="O e-mail não pôde ser enviado">
-              {criado.motivoEmail} O acesso foi criado mesmo assim: envie o link abaixo
-              para a pessoa.
+            <Alerta tom="alerta" titulo="Usuário criado, link pendente">
+              O acesso foi criado, mas o link não pôde ser gerado agora. Gere pelo botão
+              de chave na linha da pessoa, na lista de usuários.
             </Alerta>
           )}
-
-          <LinkAcesso link={criado.link} nome={nome} />
         </div>
       </Modal>
     );
@@ -299,7 +302,7 @@ function ModalConvite({
       aberto={aberto}
       aoFechar={aoFechar}
       titulo="Convidar colaborador"
-      descricao="O sistema cria o acesso e devolve um link para a pessoa definir a senha."
+      descricao="Você envia o link gerado; a pessoa define a própria senha."
       rodape={
         <>
           <Botao variante="contorno" onClick={aoFechar} disabled={pendente}>
@@ -366,9 +369,9 @@ function ModalConvite({
         )}
 
         <Alerta tom="info" titulo="Como a pessoa recebe o acesso">
-          O sistema tenta enviar um e-mail e, dando certo ou não, sempre mostra um link
-          que você pode repassar por WhatsApp. Enquanto não houver um SMTP próprio
-          configurado no Supabase, o link é o caminho confiável.
+          Ao criar, o sistema mostra um link de acesso para você enviar por WhatsApp ou
+          e-mail. A pessoa abre, escolhe a própria senha e entra. O link vale por 1 hora —
+          se vencer, gere outro pelo botão de chave na lista.
         </Alerta>
       </div>
     </Modal>

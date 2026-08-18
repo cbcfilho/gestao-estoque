@@ -68,8 +68,9 @@ export function LinkAcesso({
       </div>
 
       <p className="mt-2 text-xs texto-suave">
-        O link vale uma única vez e expira. Se a pessoa não usar a tempo, gere outro pelo
-        botão de envelope na lista de usuários.
+        O link vale uma única vez e expira em 1 hora. Gerar um link novo cancela o
+        anterior — envie sempre o último. Para gerar outro, use o botão de chave na
+        lista de usuários.
       </p>
     </div>
   );

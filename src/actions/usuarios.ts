@@ -20,21 +20,19 @@ const esquemaConvite = z.object({
 
 export interface ResultadoConvite {
   usuarioId: string;
-  /** Link de definição de senha, para o gestor enviar por conta própria. */
+  /** Link de definição de senha, para o gestor enviar à pessoa. */
   link: string;
-  /** Falso quando o e-mail não pôde ser enviado (limite do Supabase, SMTP ausente). */
-  emailEnviado: boolean;
-  motivoEmail?: string;
 }
 
 /**
- * Cria o acesso de um colaborador.
+ * Cria o acesso de um colaborador e devolve o link de definição de senha.
  *
- * O envio de e-mail é o elo mais frágil dessa operação: o serviço compartilhado
- * do Supabase libera poucas mensagens por hora e, sem SMTP próprio, o convite
- * simplesmente não chega. Por isso o e-mail é tratado como um extra, não como
- * requisito: o usuário é criado de qualquer forma e a função sempre devolve um
- * link de definição de senha, que o gestor pode repassar por WhatsApp.
+ * De propósito, NÃO tenta enviar e-mail: sem SMTP próprio, o serviço do
+ * Supabase falha de forma imprevisível (limite por hora), e um convite que às
+ * vezes chega e às vezes não é pior que nenhum. Com um único caminho, o
+ * resultado é sempre o mesmo: usuário criado, já confirmado, e um link que o
+ * gestor repassa por WhatsApp. Quando houver SMTP configurado, o envio por
+ * e-mail pode ser reintroduzido aqui.
  *
  * Usa a service role porque criar usuário no Auth é operação administrativa —
  * por isso a permissão é conferida na primeira linha, antes de qualquer chamada
@@ -70,80 +68,72 @@ export async function convidarUsuario(entrada: unknown): Promise<Resultado<Resul
       return { ok: false, erro: "Você não pode criar usuários com acesso a todas as filiais." };
     }
 
-    const origem = await origemDoSite();
-
     const admin = supabaseAdmin();
-    const metadados = { nome: dados.nome, perfil: dados.perfil_chave };
 
-    // 1) Tenta o convite por e-mail, que é o caminho mais confortável.
-    let usuarioId: string | null = null;
-    let emailEnviado = false;
-    let motivoEmail: string | undefined;
-
-    const convite = await admin.auth.admin.inviteUserByEmail(dados.email, {
-      data: metadados,
-      redirectTo: `${origem}/auth/callback?proximo=/redefinir-senha`,
+    // Já confirmado: o login da pessoa nunca fica travado esperando um clique
+    // em e-mail de confirmação que talvez nunca chegue.
+    const criacao = await admin.auth.admin.createUser({
+      email: dados.email,
+      email_confirm: true,
+      user_metadata: { nome: dados.nome, perfil: dados.perfil_chave },
     });
 
-    if (!convite.error) {
-      usuarioId = convite.data.user.id;
-      emailEnviado = true;
-    } else {
-      const mensagem = String(convite.error.message ?? "").toLowerCase();
-
-      if (mensagem.includes("already been registered") || mensagem.includes("already exists")) {
+    if (criacao.error) {
+      const m = String(criacao.error.message ?? "").toLowerCase();
+      if (m.includes("already been registered") || m.includes("already exists")) {
         return { ok: false, erro: "Já existe um usuário com este e-mail." };
       }
-
-      motivoEmail = mensagem.includes("rate limit")
-        ? "O Supabase atingiu o limite de e-mails por hora."
-        : "O Supabase não conseguiu enviar o e-mail (SMTP não configurado).";
-
-      // 2) O e-mail falhou, mas o acesso não pode ficar refém disso: cria o
-      //    usuário direto, já com o e-mail confirmado.
-      const criacao = await admin.auth.admin.createUser({
-        email: dados.email,
-        email_confirm: true,
-        user_metadata: metadados,
-      });
-
-      if (criacao.error) {
-        const m = criacao.error.message.toLowerCase();
-        if (m.includes("already been registered") || m.includes("already exists")) {
-          return { ok: false, erro: "Já existe um usuário com este e-mail." };
-        }
-        return { ok: false, erro: mensagemErro(criacao.error) };
-      }
-
-      usuarioId = criacao.data.user.id;
+      return { ok: false, erro: mensagemErro(criacao.error) };
     }
 
-    // O trigger já criou a linha em `usuarios`; aqui garantimos nome e perfil.
-    await admin
-      .from("usuarios")
-      .update({ nome: dados.nome, perfil_id: perfil.id })
-      .eq("id", usuarioId);
+    const usuarioId = criacao.data.user.id;
+
+    // Upsert, não update: o trigger em auth.users já deve ter criado esta linha,
+    // mas se por algum motivo não criou, o usuário conseguiria autenticar e
+    // ficaria presa num laço de login — a sessão da aplicação não existiria.
+    // O upsert fecha essa brecha sem depender do trigger ter rodado.
+    const vinculo = await admin.from("usuarios").upsert(
+      {
+        id: usuarioId,
+        nome: dados.nome,
+        email: dados.email,
+        perfil_id: perfil.id,
+        ativo: true,
+      },
+      { onConflict: "id" },
+    );
+
+    if (vinculo.error) {
+      return { ok: false, erro: mensagemErro(vinculo.error) };
+    }
 
     if (dados.filiais.length > 0) {
       await admin.from("usuario_filiais").upsert(
-        dados.filiais.map((filialId) => ({ usuario_id: usuarioId!, filial_id: filialId })),
+        dados.filiais.map((filialId) => ({ usuario_id: usuarioId, filial_id: filialId })),
         { onConflict: "usuario_id,filial_id", ignoreDuplicates: true },
       );
     }
 
-    // 3) Gera o link de definição de senha sempre — serve tanto para o gestor
-    //    repassar agora quanto para reenviar depois.
-    const link = await gerarLinkAcesso(dados.email, origem);
-
     revalidatePath("/configuracoes/usuarios");
 
-    return {
-      ok: true,
-      dados: { usuarioId: usuarioId!, link, emailEnviado, motivoEmail },
-      mensagem: emailEnviado
-        ? `Convite enviado para ${dados.email}.`
-        : `Acesso criado para ${dados.email}. Envie o link abaixo para a pessoa.`,
-    };
+    // A partir daqui o usuário JÁ EXISTE. Se a geração do link falhar, devolver
+    // erro faria o gestor tentar de novo e esbarrar em "já existe este e-mail",
+    // parecendo um defeito. Melhor confirmar a criação e orientar o próximo passo.
+    try {
+      const link = await gerarLinkAcesso(dados.email, await origemDoSite());
+
+      return {
+        ok: true,
+        dados: { usuarioId, link },
+        mensagem: `Acesso criado para ${dados.email}.`,
+      };
+    } catch {
+      return {
+        ok: true,
+        dados: { usuarioId, link: "" },
+        mensagem: `Acesso criado para ${dados.email}, mas o link não pôde ser gerado agora. Use o botão de chave na lista.`,
+      };
+    }
   } catch (erro) {
     if (erro instanceof z.ZodError) {
       return { ok: false, erro: erro.issues[0]?.message ?? "Dados inválidos." };
