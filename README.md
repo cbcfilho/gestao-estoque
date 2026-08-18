@@ -160,54 +160,179 @@ Se o servidor já estiver rodando e você mudar o `.env.local`, o Next recarrega
 sozinho (aparece `Reload env: .env.local` no terminal). Não precisa reiniciar.
 
 ---
-
 ## 3. Publicar na internet
 
-### 3.1 Hospedagem (Vercel)
+Esta seção assume que você nunca publicou um site. Siga na ordem — cada etapa
+depende da anterior. As seis primeiras (3.1 a 3.6) são obrigatórias; o resto é
+complemento.
 
-1. Suba o projeto para um repositório no GitHub.
-2. Em <https://vercel.com>, importe o repositório.
-3. Cadastre as mesmas variáveis do `.env.local` em **Settings → Environment Variables**,
-   com `NEXT_PUBLIC_SITE_URL` apontando para o domínio final.
-4. Publique.
+O sistema vai morar em dois lugares: o **Supabase** guarda os dados (isso você
+já fez na seção 1) e a **Vercel** hospeda as telas. A Vercel pega o código do
+GitHub e coloca no ar sozinha, toda vez que você atualizar.
 
-### 3.2 Ajustar as URLs no Supabase
+### 3.1 Colocar o código no GitHub
 
-Em **Authentication → URL Configuration**, cadastre o domínio de produção em
-**Site URL** e em **Redirect URLs** (incluindo `https://seu-dominio/auth/callback`).
-Sem isso, os links de convite e de recuperação de senha não funcionam.
-
-### 3.3 Rotina automática de tarefas
-
-O arquivo `vercel.json` já agenda a rotina diária às 9h (horário UTC):
-
-```
-/api/cron/tarefas-automaticas
-```
-
-Ela cobra o inventário mensal, abre tarefas de reposição e de vencimento, lembra do
-fechamento de ponto e marca como atrasado o que passou do prazo. É **idempotente**:
-rodar várias vezes no mesmo dia não duplica nada.
-
-Para disparar manualmente (teste):
+A Vercel não lê a sua máquina — ela lê o GitHub. Se ainda não fez:
 
 ```bash
-curl -H "Authorization: Bearer SEU_CRON_SECRET" https://seu-dominio/api/cron/tarefas-automaticas
+git add -A
 ```
 
-### 3.4 Notificações push (opcional)
+```bash
+git commit -m "Sistema de gestao de estoque"
+```
+
+```bash
+git push
+```
+
+Se o `git push` reclamar que não existe repositório remoto, crie um em
+<https://github.com/new> (pode ser privado) e siga as instruções que a própria
+página mostra.
+
+> Os arquivos `.env.local` e `.env.example` **não** vão para o GitHub: o
+> `.gitignore` os bloqueia de propósito, porque contêm senhas. As variáveis são
+> cadastradas direto na Vercel, no passo 3.3.
+
+### 3.2 Importar o projeto na Vercel
+
+1. Entre em <https://vercel.com> e crie a conta usando **Continue with GitHub** —
+   assim as duas ficam conectadas de uma vez.
+2. Na tela inicial, clique em **Add New… → Project**.
+3. Encontre o repositório `gestao-estoque` na lista e clique em **Import**.
+4. A Vercel detecta Next.js sozinha. **Não mude nada** em Framework, Build
+   Command ou Output Directory.
+5. **Ainda não clique em Deploy.** Antes disso, cadastre as variáveis (3.3).
+
+Se você clicar em Deploy antes, não tem problema: o deploy vai falhar por falta
+das variáveis, e depois de cadastrá-las é só mandar publicar de novo (3.4).
+
+### 3.3 Cadastrar as variáveis de ambiente
+
+Variável de ambiente é onde ficam os endereços e as senhas que o sistema precisa
+para conversar com o Supabase. Elas não ficam no código justamente para não
+vazarem.
+
+**Onde cadastrar.** Abra o **projeto** na Vercel e vá em
+**Settings → Environment Variables**.
+
+> Se a janela que abrir tiver um campo **"Link to Projects"**, você está na
+> página da *equipe*, não na do projeto — as variáveis cadastradas ali não
+> chegam ao sistema a menos que você vincule o projeto naquele campo. O caminho
+> mais simples é sair e entrar pelo projeto.
+
+**Pegar os valores.** No terminal, dentro da pasta do projeto:
+
+```bash
+npm run vars
+```
+
+O comando lê o seu `.env.local` e imprime dois blocos prontos para colar.
+
+**Bloco 1 — públicas.** Cole no campo **Key** (a Vercel separa as linhas
+sozinha), deixe **Sensitive DESLIGADO**, escolha **All Environments** e salve.
+
+**Bloco 2 — secretas.** Repita o processo, mas agora **LIGUE o Sensitive** antes
+de salvar.
+
+Por que a diferença: as duas primeiras chaves são embutidas na página e chegam ao
+navegador de qualquer visitante — marcá-las como secretas só atrapalharia você
+mais tarde, sem proteger nada. Já a `SUPABASE_SERVICE_ROLE_KEY` ignora todas as
+regras de segurança do banco e a `CRON_SECRET` libera a rotina automática: essas
+nunca podem sair do servidor. Com o Sensitive ligado, nem você consegue lê-las de
+volta no painel — só substituir.
+
+| Variável | Sensitive | Para que serve |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | não | Endereço do seu banco |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | não | Chave pública de leitura, protegida pelas policies |
+| `SUPABASE_SERVICE_ROLE_KEY` | **sim** | Acesso total ao banco, só no servidor |
+| `CRON_SECRET` | **sim** | Autoriza a rotina diária de tarefas |
+| `NEXT_PUBLIC_SITE_URL` | não | Endereço do site — só no passo 3.6 |
+
+### 3.4 Publicar
+
+Volte à aba **Deployments** do projeto e clique em **Deploy** (ou **Redeploy**,
+se já tinha tentado antes). Leva de 1 a 3 minutos.
+
+Ao terminar, a Vercel mostra o endereço do site, algo como
+`https://gestao-estoque-xxxx.vercel.app`. **Anote — você precisa dele agora.**
+
+Se falhar, abra o deploy e leia a aba **Building**: a última linha em vermelho diz
+o motivo. Faltar variável é de longe a causa mais comum.
+
+### 3.5 Avisar o Supabase qual é o endereço do site
+
+Sem este passo, o login funciona mas os links de convite e de recuperação de senha
+mandam a pessoa para o lugar errado.
+
+No painel do Supabase, em **Authentication → URL Configuration**:
+
+- **Site URL**: `https://seu-endereco.vercel.app`
+- **Redirect URLs**: clique em *Add URL* e cadastre
+  `https://seu-endereco.vercel.app/auth/callback`
+
+Mantenha também `http://localhost:3000/auth/callback` na lista, para continuar
+testando na sua máquina.
+
+### 3.6 Cadastrar o endereço do site na Vercel
+
+Volte em **Settings → Environment Variables** e adicione, com Sensitive
+desligado:
+
+```
+NEXT_PUBLIC_SITE_URL=https://seu-endereco.vercel.app
+```
+
+Como variável nova só vale a partir do próximo build, vá em **Deployments**, abra
+o menu `···` do deploy mais recente e clique em **Redeploy**.
+
+Pronto: acesse o endereço, entre com seu e-mail e senha, e o sistema está no ar.
+
+### 3.7 Rotina automática de tarefas
+
+Já vem configurada no arquivo `vercel.json`: a Vercel chama
+`/api/cron/tarefas-automaticas` todo dia às 9h (horário UTC, ou seja, 6h de
+Brasília). Ela cobra o inventário mensal, abre tarefas de reposição e de
+vencimento, lembra do fechamento de ponto e marca o que passou do prazo.
+
+Não precisa fazer nada. Para conferir depois do deploy, use
+**Settings → Cron Jobs** no painel da Vercel.
+
+> No plano gratuito da Vercel os cron jobs rodam **uma vez por dia**, o que é
+> exatamente o que esta rotina precisa.
+
+Para disparar manualmente e testar:
+
+```bash
+curl -H "Authorization: Bearer SEU_CRON_SECRET" https://seu-endereco.vercel.app/api/cron/tarefas-automaticas
+```
+
+### 3.8 Atualizações depois de publicado
+
+A partir daqui, publicar uma mudança é só:
+
+```bash
+git add -A && git commit -m "descricao da mudanca" && git push
+```
+
+A Vercel percebe o push e republica sozinha em poucos minutos.
+
+### 3.9 Notificações push (opcional)
 
 ```bash
 npx web-push generate-vapid-keys
 ```
 
-Preencha `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT`.
-Sem essas chaves, as notificações continuam aparecendo dentro do sistema (no sino) —
-só não chegam ao celular com o app fechado.
+Cadastre `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (Sensitive desligado),
+`VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (Sensitive ligado), e faça Redeploy.
 
-### 3.5 Instalar no celular
+Sem essas chaves, as notificações continuam aparecendo dentro do sistema (no
+sino) — só não chegam ao celular com o app fechado.
 
-- **Android:** abra no Chrome → menu → *Instalar aplicativo*.
+### 3.10 Instalar no celular
+
+- **Android:** abra o endereço no Chrome → menu → *Instalar aplicativo*.
 - **iPhone:** abra no Safari → Compartilhar → *Adicionar à Tela de Início*.
   No iOS, as notificações push **só funcionam** depois de instalado assim.
 

@@ -9,7 +9,8 @@
     "lint": "eslint",
     "diagnostico": "node --env-file=.env.local scripts/diagnostico.mjs",
     "senha": "node --env-file=.env.local scripts/gerar-link-senha.mjs",
-    "icones": "node scripts/gerar-icones.mjs"
+    "icones": "node scripts/gerar-icones.mjs",
+    "vars": "node --env-file=.env.local scripts/vars-vercel.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
