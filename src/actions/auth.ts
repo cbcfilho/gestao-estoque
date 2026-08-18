@@ -35,18 +35,10 @@ export async function entrar(
     return { erro: mensagemErro(error) };
   }
 
-  // Registra o último acesso — usado na tela de usuários.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    await supabase
-      .from("usuarios")
-      .update({ ultimo_acesso: new Date().toISOString() })
-      .eq("id", user.id);
-  }
-
+  // O último acesso não é registrado aqui: um gatilho no banco (migration 0011)
+  // espelha auth.users.last_sign_in_at para usuarios.ultimo_acesso. Assim vale
+  // para qualquer forma de entrar — senha, link de convite, recuperação — e não
+  // só para este formulário.
   revalidatePath("/", "layout");
   redirect(destino.startsWith("/") ? destino : "/painel");
 }

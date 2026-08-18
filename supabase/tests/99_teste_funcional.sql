@@ -301,4 +301,17 @@ begin
   end;
 end $$;
 
+-- --------------------------------------------------- ultimo acesso
+-- Entrar por link (ou por senha) deve refletir na tela de usuarios.
+do $$
+declare v_id uuid := '11111111-1111-1111-1111-111111111111';
+begin
+  update auth.users set last_sign_in_at = now() where id = v_id;
+
+  if (select ultimo_acesso from usuarios where id = v_id) is null then
+    raise exception 'FALHOU: ultimo_acesso continuou nulo apos o login';
+  end if;
+  raise notice 'ok  ultimo acesso espelhado do auth para a tabela usuarios';
+end $$;
+
 select '=========== TODOS OS TESTES PASSARAM ===========' as resultado;

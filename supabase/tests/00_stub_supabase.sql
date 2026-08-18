@@ -18,7 +18,9 @@ create schema storage;
 create table auth.users (
   id                 uuid primary key default gen_random_uuid(),
   email              text,
-  raw_user_meta_data jsonb default '{}'::jsonb
+  raw_user_meta_data jsonb default '{}'::jsonb,
+  -- Preenchida pelo Auth a cada entrada; a migration 0011 espelha na aplicação.
+  last_sign_in_at    timestamptz
 );
 
 -- No Supabase, auth.uid() lê o claim "sub" do JWT. Aqui devolve uma GUC
