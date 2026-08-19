@@ -40,7 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# logotipo da franquia — material da franqueadora, fica só na máquina
-# e nas variáveis do deploy, não no repositório
-public/logo.*
-public/logo-icone.*
+# Os arquivos de logotipo VÃO para o repositório: a Vercel constrói a partir
+# do GitHub, então sem eles a marca não apareceria em produção. Sendo a marca
+# da própria empresa, não há problema — se um dia for material de terceiro
+# (a franqueadora, por exemplo), descomente as linhas abaixo e sirva a imagem
+# de outro lugar.
+# public/logo.*
+# public/logo-icone.*

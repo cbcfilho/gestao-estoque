@@ -3,24 +3,28 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 /**
- * Logotipo do sistema.
+ * Identidade nas telas.
  *
- * Se existir um arquivo em `public/` apontado por `NEXT_PUBLIC_LOGO`, ele é
- * usado; caso contrário aparece o símbolo genérico definido abaixo.
+ * Duas coisas diferentes convivem aqui:
  *
- * O arquivo do logotipo não vem no repositório de propósito — veja a seção 3.9
- * do README. Depois de trocá-lo, rode `npm run icones`.
+ *   - a **marca de quem construiu** (o símbolo e o nome da consultoria), que
+ *     assina o trabalho e aparece nas telas de entrada;
+ *   - o **nome do sistema**, que é o que o operador de loja reconhece no dia a
+ *     dia e aparece no menu.
+ *
+ * O nome da marca vai em HTML, não embutido numa imagem: fica nítido em
+ * qualquer tamanho, acompanha o tema claro/escuro e não pesa no carregamento.
+ * A imagem entra só para o símbolo, que aí sim precisa ser desenho.
+ *
+ * Os arquivos ficam fora do repositório por padrão — veja a seção 3.9 do README.
  */
 
-/** Caminho do logotipo dentro de `public/`. Vazio usa o símbolo genérico. */
-export const LOGO_ARQUIVO = process.env.NEXT_PUBLIC_LOGO ?? "";
+/** Símbolo compacto da marca (só o desenho, sem texto). */
+const ICONE = process.env.NEXT_PUBLIC_LOGO_ICONE ?? "";
 
-/**
- * Quando o logotipo já traz o nome do sistema escrito, o texto ao lado vira
- * repetição. Não é o caso quando o logotipo é a assinatura de quem construiu e
- * o sistema tem nome próprio — aí os dois convivem.
- */
-const LOGO_TEM_O_NOME = process.env.NEXT_PUBLIC_LOGO_COM_NOME === "sim";
+/** Nome da marca, escrito em HTML nas telas de entrada. */
+const MARCA_NOME = process.env.NEXT_PUBLIC_MARCA_NOME ?? "";
+const MARCA_SUBTITULO = process.env.NEXT_PUBLIC_MARCA_SUBTITULO ?? "";
 
 /** Símbolo de reserva: grão de cacau genérico, criado para este projeto. */
 export function SimboloGenerico({ className }: { className?: string }) {
@@ -53,63 +57,69 @@ export function SimboloGenerico({ className }: { className?: string }) {
   );
 }
 
-/**
- * O logotipo em si.
- *
- * A altura é fixa e a largura é livre: logotipo horizontal (marca + nome ao
- * lado) não cabe num quadrado sem virar uma tarja ilegível. Quem controla o
- * espaço é a altura.
- */
-export function Simbolo({ className, altura = "h-8" }: { className?: string; altura?: string }) {
-  if (!LOGO_ARQUIVO) return <SimboloGenerico className={className} />;
+/** O símbolo da marca, em tamanho controlado pela altura. */
+export function Simbolo({ className }: { className?: string }) {
+  if (!ICONE) return <SimboloGenerico className={className} />;
 
   return (
     <Image
-      src={LOGO_ARQUIVO}
+      src={ICONE}
       alt=""
-      width={480}
-      height={160}
+      width={128}
+      height={128}
       priority
-      className={cn("w-auto object-contain", altura, className)}
+      className={cn("size-8 object-contain", className)}
     />
   );
 }
 
-export function Marca({
-  className,
-  nome = "Estoque Cacau",
-  subtitulo,
-  /** Telas de entrada mostram o logotipo maior; o menu, compacto. */
-  destaque = false,
-}: {
-  className?: string;
-  nome?: string;
-  subtitulo?: string;
-  destaque?: boolean;
-}) {
-  // Logotipo horizontal ocupa a linha inteira: o nome vai embaixo, não ao lado.
-  if (LOGO_ARQUIVO) {
+/**
+ * Assinatura da marca: símbolo sobre o nome, centralizado.
+ * Usada nas telas de entrada, onde há espaço e o objetivo é apresentar-se.
+ */
+export function MarcaDestaque({ className }: { className?: string }) {
+  if (!MARCA_NOME) {
     return (
-      <div className={cn("flex flex-col items-center gap-1.5", className)}>
-        <Simbolo altura={destaque ? "h-14" : "h-8"} />
-
-        {LOGO_TEM_O_NOME ? (
-          <span className="sr-only">{nome}</span>
-        ) : (
-          <div className="text-center leading-tight">
-            <p className={cn("truncate font-semibold", destaque ? "text-base" : "text-sm")}>
-              {nome}
-            </p>
-            {subtitulo && <p className="truncate text-xs texto-suave">{subtitulo}</p>}
-          </div>
-        )}
+      <div className={cn("flex flex-col items-center gap-2", className)}>
+        <Simbolo className="size-14" />
       </div>
     );
   }
 
   return (
+    <div className={cn("flex flex-col items-center gap-2.5", className)}>
+      <Simbolo className="size-16" />
+
+      <div className="text-center leading-tight">
+        <p className="text-2xl font-bold tracking-[0.14em] text-[var(--marca-forte)]">
+          {MARCA_NOME}
+        </p>
+        {MARCA_SUBTITULO && (
+          <p className="mt-0.5 text-xs tracking-wide text-[var(--marca-suave)]">
+            {MARCA_SUBTITULO}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Marca compacta: símbolo ao lado do nome do sistema.
+ * Usada no menu e no topo do celular, onde quem lê é o operador de loja.
+ */
+export function Marca({
+  className,
+  nome = "Estoque Cacau",
+  subtitulo,
+}: {
+  className?: string;
+  nome?: string;
+  subtitulo?: string;
+}) {
+  return (
     <div className={cn("flex items-center gap-2.5", className)}>
-      <SimboloGenerico className={destaque ? "size-11" : undefined} />
+      <Simbolo />
       <div className="min-w-0 leading-tight">
         <p className="truncate font-semibold">{nome}</p>
         {subtitulo && <p className="truncate text-xs texto-suave">{subtitulo}</p>}

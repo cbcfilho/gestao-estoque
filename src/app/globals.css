@@ -43,6 +43,16 @@
   --color-areia-800: #38332D;
   --color-areia-900: #22201C;
 
+  /* Marca de quem construiu o sistema (assinatura nas telas de entrada).
+     Extraídas do próprio logotipo — não são as cores da operação, que
+     continuam sendo o marrom e o dourado do cacau. */
+  --color-marca-900: #142a4d;
+  --color-marca-700: #204070;
+  --color-marca-500: #2080b0;
+  --color-marca-400: #3090c0;
+  --color-marca-300: #40c0e0;
+  --color-marca-200: #7dd8f0;
+
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
   --radius-card: 0.75rem;
@@ -62,6 +72,8 @@
     --borda: var(--color-areia-200);
     --texto: var(--color-areia-900);
     --texto-suave: var(--color-areia-600);
+    --marca-forte: var(--color-marca-700);
+    --marca-suave: var(--color-marca-500);
   }
 
   .dark {
@@ -71,6 +83,8 @@
     --borda: #443E38;
     --texto: var(--color-areia-100);
     --texto-suave: var(--color-areia-400);
+    --marca-forte: var(--color-marca-300);
+    --marca-suave: var(--color-marca-200);
   }
 
   * {

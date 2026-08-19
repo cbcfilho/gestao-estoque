@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 
 import { FormularioLogin } from "./formulario";
 import { AvisoConfiguracao } from "@/components/aviso-configuracao";
-import { Marca } from "@/components/marca";
+import { MarcaDestaque } from "@/components/marca";
 import { Alerta } from "@/components/ui/estados";
 
 export const metadata: Metadata = { title: "Entrar" };
@@ -24,7 +24,11 @@ export default async function PaginaLogin({
     <main className="flex flex-1 items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <Marca className="scale-125" subtitulo="Gestão Multi-Filial" />
+          <MarcaDestaque />
+
+          <p className="text-sm font-medium">
+            Estoque Cacau <span className="texto-suave">· Gestão Multi-Filial</span>
+          </p>
           <p className="text-sm texto-suave">
             Entre com o e-mail cadastrado pelo gestor da sua filial.
           </p>

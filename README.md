@@ -375,58 +375,61 @@ A Vercel percebe o push e republica sozinha em poucos minutos.
 > não é um separador de instruções válido nesta versão"*. No Prompt de Comando
 > e no PowerShell 7+ o `&&` funciona normalmente.
 
-### 3.9 Colocar o logotipo da sua marca
+### 3.9 Colocar a sua marca
 
-O sistema sai com um símbolo genérico de grão de cacau, criado para este
-projeto. Para usar o logotipo oficial da franquia:
+O sistema sai com um símbolo genérico de grão de cacau. Para assinar com a sua
+marca:
 
-1. Salve o arquivo como **`public/logo.png`** (aceita também `.svg`, `.jpg` e
-   `.webp`; SVG é o melhor, por não perder qualidade).
+**1. Salve o símbolo** — só o desenho, sem o nome escrito na imagem — como
+`public/logo-icone.png`. Fundo transparente, quadrado, de preferência 512px ou
+mais (ele é ampliado para o ícone do celular).
 
-   Se o seu logotipo for **horizontal** (símbolo + nome ao lado), salve também
-   uma versão só do símbolo como **`public/logo-icone.png`**. Um logotipo
-   horizontal dentro de um ícone quadrado de 192px vira uma faixa fina e
-   ilegível; o gerador usa a versão compacta para os ícones do celular e a
-   completa para as telas.
-2. Gere os ícones do celular a partir dele:
+**2. Gere os ícones do app:**
 
 ```bash
 npm run icones
 ```
 
-3. Ative o logotipo nas telas criando no `.env.local`:
+**3. Configure no `.env.local`:**
 
 ```
-NEXT_PUBLIC_LOGO=/logo.png
+NEXT_PUBLIC_LOGO_ICONE=/logo-icone.png
+NEXT_PUBLIC_MARCA_NOME=VANGUARD
+NEXT_PUBLIC_MARCA_SUBTITULO=Governança e Consultoria
 ```
 
-4. Se o logotipo **já traz o nome escrito**, evite a repetição do texto ao lado:
+**4. Na Vercel**, cadastre as mesmas três variáveis e faça Redeploy.
 
-```
-NEXT_PUBLIC_LOGO_COM_NOME=sim
-```
+#### Por que o nome vai em HTML e não na imagem
 
-5. Na Vercel, cadastre as mesmas duas variáveis em **Settings → Environment
-   Variables** e faça Redeploy.
+O logotipo horizontal completo (símbolo + nome ao lado) tem dois problemas nas
+telas: encolhido para a altura de um cabeçalho, o texto fica ilegível; e um
+arquivo exportado com fundo próprio vira um retângulo claro flutuando no tema
+escuro.
 
-Dois detalhes que costumam passar batido:
+Escrevendo o nome em HTML, ele fica nítido em qualquer tamanho, troca de cor
+junto com o tema e não pesa no carregamento. A imagem entra só para o símbolo,
+que aí sim precisa ser desenho.
 
-- **Fundo dos ícones.** Logotipo com fundo transparente ganha fundo branco. Para
-  outra cor: `ICONE_FUNDO=#5B2C20 npm run icones`.
-- **Fundo transparente é o ideal.** Se o arquivo vier com fundo próprio (aquele
-  degradê claro de apresentação, por exemplo), ele aparece como um retângulo
-  dentro das telas — e fica evidente no tema escuro. Exporte em PNG com
-  transparência ou em SVG.
-- **O arquivo não vai para o GitHub por padrão.** O `.gitignore` bloqueia
-  `public/logo.*` e `public/logo-icone.*` — é a escolha conservadora para
-  material de marca. Como a Vercel constrói a partir do GitHub, **o logotipo só
-  aparece em produção se estiver no repositório**: sendo a marca da sua própria
-  empresa e o repositório privado, é só remover essas duas linhas do
-  `.gitignore` e comitar normalmente.
+As cores vêm dos tokens `--marca-*` em `globals.css` — navy no tema claro, ciano
+no escuro, ambos tirados do próprio símbolo. Para trocar de marca, ajuste esses
+tokens.
+
+#### Onde cada uma aparece
+
+| Tela | O que mostra |
+|---|---|
+| Login, recuperação, 2FA | Símbolo grande + nome da marca + nome do sistema |
+| Menu lateral e topo do celular | Símbolo pequeno + "Estoque Cacau" |
+| Ícone na tela de início | Só o símbolo |
+
+A separação é proposital: a marca assina o trabalho na entrada; no dia a dia
+quem usa é o operador de loja, e para ele o que importa é o nome do sistema.
 
 > **Se for usar a marca da franqueadora** em vez da sua: o logotipo é
-> propriedade dela e o uso segue o seu contrato de franquia. Confira o manual da
-> marca quanto a proporções, cores e área de proteção antes de aplicar.
+> propriedade dela e o uso segue o seu contrato de franquia. Nesse caso,
+> descomente as linhas de `public/logo.*` no `.gitignore` para o arquivo não ir
+> ao repositório, e confira o manual da marca quanto a proporções e cores.
 
 ### 3.9 Notificações push (opcional)
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 
 import { solicitarRecuperacao, type EstadoFormulario } from "@/actions/auth";
-import { Marca } from "@/components/marca";
+import { MarcaDestaque } from "@/components/marca";
 import { Botao } from "@/components/ui/botao";
 import { Campo } from "@/components/ui/campo";
 import { Alerta } from "@/components/ui/estados";
@@ -20,7 +20,11 @@ export default function PaginaRecuperarSenha() {
     <main className="flex flex-1 items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <Marca className="scale-125" subtitulo="Gestão Multi-Filial" />
+          <MarcaDestaque />
+
+          <p className="text-sm font-medium">
+            Estoque Cacau <span className="texto-suave">· Gestão Multi-Filial</span>
+          </p>
           <p className="text-sm texto-suave">
             Informe o e-mail cadastrado e enviaremos um link para criar uma nova senha.
           </p>
