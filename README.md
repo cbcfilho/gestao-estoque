@@ -382,6 +382,12 @@ projeto. Para usar o logotipo oficial da franquia:
 
 1. Salve o arquivo como **`public/logo.png`** (aceita também `.svg`, `.jpg` e
    `.webp`; SVG é o melhor, por não perder qualidade).
+
+   Se o seu logotipo for **horizontal** (símbolo + nome ao lado), salve também
+   uma versão só do símbolo como **`public/logo-icone.png`**. Um logotipo
+   horizontal dentro de um ícone quadrado de 192px vira uma faixa fina e
+   ilegível; o gerador usa a versão compacta para os ícones do celular e a
+   completa para as telas.
 2. Gere os ícones do celular a partir dele:
 
 ```bash
@@ -407,17 +413,20 @@ Dois detalhes que costumam passar batido:
 
 - **Fundo dos ícones.** Logotipo com fundo transparente ganha fundo branco. Para
   outra cor: `ICONE_FUNDO=#5B2C20 npm run icones`.
-- **O arquivo não vai para o GitHub.** O `.gitignore` bloqueia `public/logo.*`
-  de propósito: identidade visual de franquia é material da franqueadora, e o
-  repositório não é o lugar dela. Como a Vercel constrói a partir do GitHub, o
-  logotipo precisa estar no repositório para aparecer em produção — se a
-  franqueadora autorizar, tire a linha do `.gitignore`; senão, use um
-  repositório privado.
+- **Fundo transparente é o ideal.** Se o arquivo vier com fundo próprio (aquele
+  degradê claro de apresentação, por exemplo), ele aparece como um retângulo
+  dentro das telas — e fica evidente no tema escuro. Exporte em PNG com
+  transparência ou em SVG.
+- **O arquivo não vai para o GitHub por padrão.** O `.gitignore` bloqueia
+  `public/logo.*` e `public/logo-icone.*` — é a escolha conservadora para
+  material de marca. Como a Vercel constrói a partir do GitHub, **o logotipo só
+  aparece em produção se estiver no repositório**: sendo a marca da sua própria
+  empresa e o repositório privado, é só remover essas duas linhas do
+  `.gitignore` e comitar normalmente.
 
-> **Sobre marca registrada.** O logotipo da franqueadora é propriedade dela. Como
-> franqueado você tem autorização de uso conforme o seu contrato — confira o
-> manual da marca antes de aplicar em sistema próprio, especialmente quanto a
-> proporções, cores e área de proteção.
+> **Se for usar a marca da franqueadora** em vez da sua: o logotipo é
+> propriedade dela e o uso segue o seu contrato de franquia. Confira o manual da
+> marca quanto a proporções, cores e área de proteção antes de aplicar.
 
 ### 3.9 Notificações push (opcional)
 

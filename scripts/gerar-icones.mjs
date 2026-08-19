@@ -6,8 +6,9 @@
  * Se existir um logotipo em `public/` (logo.png, logo.svg, logo.jpg…), ele é
  * usado. Caso contrário, cai no símbolo genérico desenhado aqui mesmo.
  *
- * O logotipo não vem no repositório: identidade visual de franquia pertence à
- * franqueadora, e é o franqueado quem tem o material oficial e a autorização.
+ * Prefere `public/logo-icone.*` (versão compacta, só o símbolo) e cai para
+ * `public/logo.*`. Os arquivos ficam fora do repositório por padrão — veja a
+ * seção 3.9 do README.
  */
 
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
@@ -28,18 +29,30 @@ const FUNDO = process.env.ICONE_FUNDO ?? "#FFFFFF";
 
 const EXTENSOES = [".png", ".svg", ".jpg", ".jpeg", ".webp"];
 
-/** Procura por um arquivo chamado "logo" em public/. */
+/**
+ * Procura o arquivo para gerar os ícones, em ordem de preferência.
+ *
+ * `logo-icone.*` vem primeiro porque logotipo horizontal (símbolo + nome ao
+ * lado) encolhe para uma tarja ilegível dentro de um ícone quadrado de 192px.
+ * Uma versão compacta — só o símbolo, sem o texto — resolve. Sem ela, usa o
+ * logotipo cheio mesmo.
+ */
 async function acharLogotipo() {
   try {
     const arquivos = await readdir(publico);
-    const achado = arquivos.find(
-      (a) => a.toLowerCase().startsWith("logo") && EXTENSOES.includes(extname(a).toLowerCase()),
-    );
+
+    const escolher = (prefixo) =>
+      arquivos.find(
+        (a) =>
+          a.toLowerCase().startsWith(prefixo) && EXTENSOES.includes(extname(a).toLowerCase()),
+      );
+
+    const achado = escolher("logo-icone") ?? escolher("logo");
     if (!achado) return null;
 
     const caminho = join(publico, achado);
     await access(caminho);
-    return caminho;
+    return { caminho, compacto: achado.toLowerCase().startsWith("logo-icone") };
   } catch {
     return null;
   }
@@ -100,18 +113,29 @@ const arquivos = [
 
 const logotipo = await acharLogotipo();
 
-console.log(
-  logotipo
-    ? `Usando o logotipo: ${logotipo.replace(raiz, ".")}\nFundo: ${FUNDO} (mude com ICONE_FUNDO=#RRGGBB)\n`
-    : "Nenhum logotipo encontrado em public/ — usando o símbolo genérico.\n" +
-        "Para usar o seu, salve o arquivo como public/logo.png e rode de novo.\n",
-);
+if (logotipo) {
+  console.log(`Usando: ${logotipo.caminho.replace(raiz, ".")}`);
+  console.log(`Fundo:  ${FUNDO} (mude com ICONE_FUNDO=#RRGGBB)`);
+
+  if (!logotipo.compacto) {
+    console.log("");
+    console.log("Aviso: este parece ser o logotipo horizontal completo. Dentro de um");
+    console.log("icone quadrado ele encolhe bastante. Se voce tiver a versao so do");
+    console.log("simbolo (sem o texto ao lado), salve como public/logo-icone.png e");
+    console.log("rode de novo — os icones do celular ficam bem melhores.");
+  }
+  console.log("");
+} else {
+  console.log("Nenhum logotipo encontrado em public/ — usando o simbolo generico.");
+  console.log("Para usar o seu, salve o arquivo como public/logo.png e rode de novo.");
+  console.log("");
+}
 
 await mkdir(destino, { recursive: true });
 
 for (const arquivo of arquivos) {
   const png = logotipo
-    ? await apartirDoLogotipo(logotipo, arquivo.tamanho, arquivo.mascara)
+    ? await apartirDoLogotipo(logotipo.caminho, arquivo.tamanho, arquivo.mascara)
     : await sharp(Buffer.from(svgGenerico(arquivo.tamanho, arquivo.mascara)))
         .png({ compressionLevel: 9 })
         .toBuffer();
@@ -121,7 +145,7 @@ for (const arquivo of arquivos) {
 }
 
 const favicon = logotipo
-  ? await apartirDoLogotipo(logotipo, 48, false)
+  ? await apartirDoLogotipo(logotipo.caminho, 48, false)
   : await sharp(Buffer.from(svgGenerico(48))).png({ compressionLevel: 9 }).toBuffer();
 
 await writeFile(join(publico, "favicon.png"), favicon);

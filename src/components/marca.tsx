@@ -5,17 +5,22 @@ import { cn } from "@/lib/utils";
 /**
  * Logotipo do sistema.
  *
- * Se existir `public/logo.png` (ou .svg — veja `LOGO_ARQUIVO`), ele é usado.
- * Caso contrário, aparece o símbolo genérico definido abaixo.
+ * Se existir um arquivo em `public/` apontado por `NEXT_PUBLIC_LOGO`, ele é
+ * usado; caso contrário aparece o símbolo genérico definido abaixo.
  *
- * O arquivo do logotipo NÃO vem no repositório de propósito: identidade visual
- * de franquia pertence à franqueadora e é o franqueado quem tem o material
- * oficial e a autorização de uso. Coloque o arquivo em `public/` e rode
- * `npm run icones` para gerar os ícones do app a partir dele.
+ * O arquivo do logotipo não vem no repositório de propósito — veja a seção 3.9
+ * do README. Depois de trocá-lo, rode `npm run icones`.
  */
 
 /** Caminho do logotipo dentro de `public/`. Vazio usa o símbolo genérico. */
 export const LOGO_ARQUIVO = process.env.NEXT_PUBLIC_LOGO ?? "";
+
+/**
+ * Quando o logotipo já traz o nome do sistema escrito, o texto ao lado vira
+ * repetição. Não é o caso quando o logotipo é a assinatura de quem construiu e
+ * o sistema tem nome próprio — aí os dois convivem.
+ */
+const LOGO_TEM_O_NOME = process.env.NEXT_PUBLIC_LOGO_COM_NOME === "sim";
 
 /** Símbolo de reserva: grão de cacau genérico, criado para este projeto. */
 export function SimboloGenerico({ className }: { className?: string }) {
@@ -48,17 +53,24 @@ export function SimboloGenerico({ className }: { className?: string }) {
   );
 }
 
-export function Simbolo({ className }: { className?: string }) {
+/**
+ * O logotipo em si.
+ *
+ * A altura é fixa e a largura é livre: logotipo horizontal (marca + nome ao
+ * lado) não cabe num quadrado sem virar uma tarja ilegível. Quem controla o
+ * espaço é a altura.
+ */
+export function Simbolo({ className, altura = "h-8" }: { className?: string; altura?: string }) {
   if (!LOGO_ARQUIVO) return <SimboloGenerico className={className} />;
 
   return (
     <Image
       src={LOGO_ARQUIVO}
       alt=""
-      width={64}
-      height={64}
+      width={480}
+      height={160}
       priority
-      className={cn("size-8 object-contain", className)}
+      className={cn("w-auto object-contain", altura, className)}
     />
   );
 }
@@ -67,26 +79,37 @@ export function Marca({
   className,
   nome = "Estoque Cacau",
   subtitulo,
-  /** Quando o logotipo já traz o nome escrito, o texto ao lado vira repetição. */
-  somenteSimbolo = Boolean(LOGO_ARQUIVO) && process.env.NEXT_PUBLIC_LOGO_COM_NOME === "sim",
+  /** Telas de entrada mostram o logotipo maior; o menu, compacto. */
+  destaque = false,
 }: {
   className?: string;
   nome?: string;
   subtitulo?: string;
-  somenteSimbolo?: boolean;
+  destaque?: boolean;
 }) {
-  if (somenteSimbolo) {
+  // Logotipo horizontal ocupa a linha inteira: o nome vai embaixo, não ao lado.
+  if (LOGO_ARQUIVO) {
     return (
-      <div className={cn("flex items-center", className)}>
-        <Simbolo className="h-10 w-auto" />
-        <span className="sr-only">{nome}</span>
+      <div className={cn("flex flex-col items-center gap-1.5", className)}>
+        <Simbolo altura={destaque ? "h-14" : "h-8"} />
+
+        {LOGO_TEM_O_NOME ? (
+          <span className="sr-only">{nome}</span>
+        ) : (
+          <div className="text-center leading-tight">
+            <p className={cn("truncate font-semibold", destaque ? "text-base" : "text-sm")}>
+              {nome}
+            </p>
+            {subtitulo && <p className="truncate text-xs texto-suave">{subtitulo}</p>}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
-      <Simbolo />
+      <SimboloGenerico className={destaque ? "size-11" : undefined} />
       <div className="min-w-0 leading-tight">
         <p className="truncate font-semibold">{nome}</p>
         {subtitulo && <p className="truncate text-xs texto-suave">{subtitulo}</p>}

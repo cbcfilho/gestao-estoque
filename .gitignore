@@ -43,3 +43,4 @@ next-env.d.ts
 # logotipo da franquia — material da franqueadora, fica só na máquina
 # e nas variáveis do deploy, não no repositório
 public/logo.*
+public/logo-icone.*
