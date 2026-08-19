@@ -1,12 +1,24 @@
+import Image from "next/image";
+
 import { cn } from "@/lib/utils";
 
 /**
- * Marca do sistema — símbolo genérico de grão de cacau.
- * Não reproduz a identidade oficial da franquia: quando você tiver o logo
- * definitivo, troque este componente ou aponte `identidade.logo_url` nas
- * configurações do sistema.
+ * Logotipo do sistema.
+ *
+ * Se existir `public/logo.png` (ou .svg — veja `LOGO_ARQUIVO`), ele é usado.
+ * Caso contrário, aparece o símbolo genérico definido abaixo.
+ *
+ * O arquivo do logotipo NÃO vem no repositório de propósito: identidade visual
+ * de franquia pertence à franqueadora e é o franqueado quem tem o material
+ * oficial e a autorização de uso. Coloque o arquivo em `public/` e rode
+ * `npm run icones` para gerar os ícones do app a partir dele.
  */
-export function Simbolo({ className }: { className?: string }) {
+
+/** Caminho do logotipo dentro de `public/`. Vazio usa o símbolo genérico. */
+export const LOGO_ARQUIVO = process.env.NEXT_PUBLIC_LOGO ?? "";
+
+/** Símbolo de reserva: grão de cacau genérico, criado para este projeto. */
+export function SimboloGenerico({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 40 40"
@@ -36,15 +48,42 @@ export function Simbolo({ className }: { className?: string }) {
   );
 }
 
+export function Simbolo({ className }: { className?: string }) {
+  if (!LOGO_ARQUIVO) return <SimboloGenerico className={className} />;
+
+  return (
+    <Image
+      src={LOGO_ARQUIVO}
+      alt=""
+      width={64}
+      height={64}
+      priority
+      className={cn("size-8 object-contain", className)}
+    />
+  );
+}
+
 export function Marca({
   className,
   nome = "Estoque Cacau",
   subtitulo,
+  /** Quando o logotipo já traz o nome escrito, o texto ao lado vira repetição. */
+  somenteSimbolo = Boolean(LOGO_ARQUIVO) && process.env.NEXT_PUBLIC_LOGO_COM_NOME === "sim",
 }: {
   className?: string;
   nome?: string;
   subtitulo?: string;
+  somenteSimbolo?: boolean;
 }) {
+  if (somenteSimbolo) {
+    return (
+      <div className={cn("flex items-center", className)}>
+        <Simbolo className="h-10 w-auto" />
+        <span className="sr-only">{nome}</span>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <Simbolo />

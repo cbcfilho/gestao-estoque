@@ -1,30 +1,56 @@
 /**
- * Gera os ícones do PWA a partir do símbolo da marca.
+ * Gera os ícones do PWA (tela de início do celular, aba do navegador).
  *
- *   node scripts/gerar-icones.mjs
+ *   npm run icones
  *
- * Rode de novo depois de trocar o símbolo em src/components/marca.tsx —
- * o desenho aqui é o mesmo, em SVG puro.
+ * Se existir um logotipo em `public/` (logo.png, logo.svg, logo.jpg…), ele é
+ * usado. Caso contrário, cai no símbolo genérico desenhado aqui mesmo.
+ *
+ * O logotipo não vem no repositório: identidade visual de franquia pertence à
+ * franqueadora, e é o franqueado quem tem o material oficial e a autorização.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import sharp from "sharp";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const destino = join(raiz, "public", "icons");
+const publico = join(raiz, "public");
+const destino = join(publico, "icons");
 
 const CACAU = "#5B2C20";
 const DOURADO = "#DCB23A";
+
+/** Fundo dos ícones. Um logotipo com fundo transparente precisa de base sólida. */
+const FUNDO = process.env.ICONE_FUNDO ?? "#FFFFFF";
+
+const EXTENSOES = [".png", ".svg", ".jpg", ".jpeg", ".webp"];
+
+/** Procura por um arquivo chamado "logo" em public/. */
+async function acharLogotipo() {
+  try {
+    const arquivos = await readdir(publico);
+    const achado = arquivos.find(
+      (a) => a.toLowerCase().startsWith("logo") && EXTENSOES.includes(extname(a).toLowerCase()),
+    );
+    if (!achado) return null;
+
+    const caminho = join(publico, achado);
+    await access(caminho);
+    return caminho;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * @param {number} tamanho
  * @param {boolean} mascara ícone "maskable": o Android recorta as bordas,
  *   então o desenho precisa caber na área segura central (~80%).
  */
-function svg(tamanho, mascara = false) {
+function svgGenerico(tamanho, mascara = false) {
   const escala = mascara ? 0.62 : 0.8;
   const desenho = tamanho * escala;
   const deslocamento = (tamanho - desenho) / 2;
@@ -41,6 +67,30 @@ function svg(tamanho, mascara = false) {
 </svg>`;
 }
 
+/** Encaixa o logotipo no quadrado do ícone, com margem e fundo sólido. */
+async function apartirDoLogotipo(caminho, tamanho, mascara) {
+  // Ícone maskable perde as bordas no Android: sobra menos espaço útil.
+  const margem = mascara ? 0.3 : 0.16;
+  const util = Math.round(tamanho * (1 - margem * 2));
+
+  const logo = await sharp(caminho, { density: 400 })
+    .resize(util, util, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+
+  return sharp({
+    create: {
+      width: tamanho,
+      height: tamanho,
+      channels: 4,
+      background: FUNDO,
+    },
+  })
+    .composite([{ input: logo, gravity: "center" }])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
 const arquivos = [
   { nome: "icone-192.png", tamanho: 192, mascara: false },
   { nome: "icone-512.png", tamanho: 512, mascara: false },
@@ -48,18 +98,33 @@ const arquivos = [
   { nome: "apple-touch-icon.png", tamanho: 180, mascara: false },
 ];
 
+const logotipo = await acharLogotipo();
+
+console.log(
+  logotipo
+    ? `Usando o logotipo: ${logotipo.replace(raiz, ".")}\nFundo: ${FUNDO} (mude com ICONE_FUNDO=#RRGGBB)\n`
+    : "Nenhum logotipo encontrado em public/ — usando o símbolo genérico.\n" +
+        "Para usar o seu, salve o arquivo como public/logo.png e rode de novo.\n",
+);
+
 await mkdir(destino, { recursive: true });
 
 for (const arquivo of arquivos) {
-  const png = await sharp(Buffer.from(svg(arquivo.tamanho, arquivo.mascara)))
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  const png = logotipo
+    ? await apartirDoLogotipo(logotipo, arquivo.tamanho, arquivo.mascara)
+    : await sharp(Buffer.from(svgGenerico(arquivo.tamanho, arquivo.mascara)))
+        .png({ compressionLevel: 9 })
+        .toBuffer();
 
   await writeFile(join(destino, arquivo.nome), png);
   console.log(`gerado: icons/${arquivo.nome} (${arquivo.tamanho}px)`);
 }
 
-// Favicon multi-resolução para a aba do navegador.
-const favicon = await sharp(Buffer.from(svg(48))).png({ compressionLevel: 9 }).toBuffer();
-await writeFile(join(raiz, "public", "favicon.png"), favicon);
+const favicon = logotipo
+  ? await apartirDoLogotipo(logotipo, 48, false)
+  : await sharp(Buffer.from(svgGenerico(48))).png({ compressionLevel: 9 }).toBuffer();
+
+await writeFile(join(publico, "favicon.png"), favicon);
 console.log("gerado: favicon.png (48px)");
+
+console.log("\nPronto. Publique com git para os ícones irem ao ar.");

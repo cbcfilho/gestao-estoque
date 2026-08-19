@@ -375,6 +375,50 @@ A Vercel percebe o push e republica sozinha em poucos minutos.
 > não é um separador de instruções válido nesta versão"*. No Prompt de Comando
 > e no PowerShell 7+ o `&&` funciona normalmente.
 
+### 3.9 Colocar o logotipo da sua marca
+
+O sistema sai com um símbolo genérico de grão de cacau, criado para este
+projeto. Para usar o logotipo oficial da franquia:
+
+1. Salve o arquivo como **`public/logo.png`** (aceita também `.svg`, `.jpg` e
+   `.webp`; SVG é o melhor, por não perder qualidade).
+2. Gere os ícones do celular a partir dele:
+
+```bash
+npm run icones
+```
+
+3. Ative o logotipo nas telas criando no `.env.local`:
+
+```
+NEXT_PUBLIC_LOGO=/logo.png
+```
+
+4. Se o logotipo **já traz o nome escrito**, evite a repetição do texto ao lado:
+
+```
+NEXT_PUBLIC_LOGO_COM_NOME=sim
+```
+
+5. Na Vercel, cadastre as mesmas duas variáveis em **Settings → Environment
+   Variables** e faça Redeploy.
+
+Dois detalhes que costumam passar batido:
+
+- **Fundo dos ícones.** Logotipo com fundo transparente ganha fundo branco. Para
+  outra cor: `ICONE_FUNDO=#5B2C20 npm run icones`.
+- **O arquivo não vai para o GitHub.** O `.gitignore` bloqueia `public/logo.*`
+  de propósito: identidade visual de franquia é material da franqueadora, e o
+  repositório não é o lugar dela. Como a Vercel constrói a partir do GitHub, o
+  logotipo precisa estar no repositório para aparecer em produção — se a
+  franqueadora autorizar, tire a linha do `.gitignore`; senão, use um
+  repositório privado.
+
+> **Sobre marca registrada.** O logotipo da franqueadora é propriedade dela. Como
+> franqueado você tem autorização de uso conforme o seu contrato — confira o
+> manual da marca antes de aplicar em sistema próprio, especialmente quanto a
+> proporções, cores e área de proteção.
+
 ### 3.9 Notificações push (opcional)
 
 ```bash
