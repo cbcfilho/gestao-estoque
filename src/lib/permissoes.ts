@@ -19,6 +19,7 @@ export const PERMISSOES = {
   estoqueEntrada: "estoque.entrada",
   estoqueSaida: "estoque.saida",
   estoqueAjustar: "estoque.ajustar",
+  estoqueImportar: "estoque.importar",
 
   transferenciasSolicitar: "transferencias.solicitar",
   transferenciasEnviar: "transferencias.enviar",

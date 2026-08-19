@@ -441,6 +441,41 @@ No depósito, o sinal costuma cair. Cada leitura feita offline é gravada no pr�
 aparelho (IndexedDB) e reenviada quando a conexão volta. A tela avisa quantas leituras
 estão pendentes e impede encerrar a contagem com fila não enviada.
 
+### Importação diária de movimentação
+
+Enquanto o sistema anterior não for desligado, a movimentação do dia entra por
+planilha, em **Estoque → Importar movimentação**. A mesma planilha aceita
+entradas e saídas misturadas, pela coluna `tipo`.
+
+O maior risco dessa rotina é importar o mesmo arquivo duas vezes — o estoque
+dobraria em silêncio. Há **duas travas independentes**:
+
+1. **Impressão digital do arquivo.** O sistema guarda um resumo criptográfico do
+   conteúdo. O mesmo arquivo é recusado mesmo se você renomeá-lo.
+2. **Chave por linha.** Cada movimento tem uma chave formada por
+   `filial + data + documento + produto + local + tipo`. Se você corrigir a
+   planilha e reenviar, as linhas que já entraram são puladas e só as novas
+   entram. O relatório final diz quantas foram aplicadas, quantas já existiam e
+   quais falharam.
+
+Duas consequências práticas dessa escolha:
+
+- **Preencha a coluna `documento`** (cupom, nota, pedido). Sem ela, duas linhas
+  do mesmo produto, no mesmo local e no mesmo dia geram a mesma chave, e a
+  segunda é considerada repetida. Sem documento, some as quantidades numa linha
+  só.
+- **Correção de valor não se faz reimportando.** Movimentação é imutável neste
+  sistema: se uma linha entrou com quantidade errada, a correção é um ajuste de
+  estoque ou um inventário — o mesmo princípio que vale para lançamentos feitos
+  a mão.
+
+A coluna `data` guarda a data real do fato, não a data da importação. É isso que
+mantém os relatórios por período corretos ao importar o movimento de ontem hoje
+de manhã.
+
+Linhas com problema (produto fora do catálogo, saldo insuficiente para a saída)
+são reportadas uma a uma, sem derrubar as demais.
+
 ### Atividades (Kanban)
 
 Colunas *A fazer · Em andamento · Atrasado · Concluído*, com arrastar e soltar.

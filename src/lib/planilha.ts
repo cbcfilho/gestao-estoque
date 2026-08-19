@@ -311,3 +311,97 @@ export async function baixarModeloPosicao() {
     },
   ]);
 }
+
+/**
+ * Impressão digital do arquivo, usada para bloquear reimportação.
+ *
+ * O mesmo conteúdo sempre gera o mesmo hash, independente do nome do arquivo —
+ * então renomear a planilha não engana a trava.
+ */
+export async function hashDoArquivo(arquivo: File): Promise<string> {
+  const bytes = await arquivo.arrayBuffer();
+  const resumo = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(resumo)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Modelo de planilha para a importação diária de movimentação. */
+export async function baixarModeloMovimentos() {
+  await gerarExcel("modelo-movimentacao", [
+    {
+      nome: "Movimentação",
+      colunas: [
+        "tipo",
+        "data",
+        "documento",
+        "ean",
+        "nome",
+        "local",
+        "quantidade",
+        "motivo",
+        "custo_unitario",
+        "lote",
+        "data_validade",
+        "observacao",
+      ],
+      linhas: [
+        [
+          "saida", "10/08/2026", "CF-001234", "7891000100103", "",
+          "prateleira", "3", "venda", "", "", "", "",
+        ],
+        [
+          "saida", "10/08/2026", "CF-001235", "7891000100103", "",
+          "prateleira", "1", "perda", "", "", "", "caiu no chão",
+        ],
+        [
+          "entrada", "10/08/2026", "NF-9876", "7891000100103", "",
+          "deposito", "120", "compra_fornecedor", "4,00", "L-0826", "31/12/2026", "",
+        ],
+      ],
+    },
+    {
+      nome: "Instruções",
+      colunas: ["campo", "obrigatório", "como preencher"],
+      linhas: [
+        ["tipo", "sim", "entrada ou saida. Pode misturar os dois na mesma planilha."],
+        ["data", "não", "Data do movimento no sistema de origem. Vazio assume hoje."],
+        [
+          "documento",
+          "recomendado",
+          "Número da nota, cupom ou pedido. É o que impede a mesma venda de entrar duas vezes.",
+        ],
+        ["ean", "sim*", "Código de barras. *Ou preencha o nome."],
+        ["nome", "sim*", "Usado só quando o EAN estiver vazio. Precisa bater exatamente com o cadastro."],
+        ["local", "sim", "deposito, prateleira ou cafeteria."],
+        ["quantidade", "sim", "Sempre positiva — o que define somar ou subtrair é a coluna tipo."],
+        ["", "", ""],
+        ["motivo (saída)", "não", "venda, perda, quebra, vencimento, consumo_interno, degustacao, brinde. Vazio assume venda."],
+        ["motivo (entrada)", "não", "compra_fornecedor, devolucao_cliente. Vazio assume compra_fornecedor."],
+        ["custo_unitario", "não", "Só na entrada. Vazio usa o custo do cadastro."],
+        ["lote", "não", "Só na entrada. Vazio agrupa no lote único."],
+        ["data_validade", "não", "Só na entrada. 31/12/2026 ou 2026-12-31."],
+        ["observacao", "não", "Texto livre que aparece no histórico da movimentação."],
+        ["", "", ""],
+        [
+          "PROTEÇÃO 1",
+          "",
+          "O mesmo arquivo não entra duas vezes: o sistema guarda uma impressão digital do conteúdo.",
+        ],
+        [
+          "PROTEÇÃO 2",
+          "",
+          "Se você corrigir o arquivo e reenviar, as linhas que já entraram são puladas. A chave é data + documento + produto + local + tipo.",
+        ],
+        [
+          "Sem documento",
+          "",
+          "Sem a coluna documento, duas linhas do mesmo produto/local/dia viram a mesma chave e a segunda é pulada. Some as quantidades ou preencha o documento.",
+        ],
+        [
+          "Saída sem saldo",
+          "",
+          "A linha falha e é reportada, sem derrubar as outras. Ajuste o estoque e reenvie só o que faltou.",
+        ],
+      ],
+    },
+  ]);
+}

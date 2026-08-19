@@ -198,3 +198,115 @@ export async function listarLotesDisponiveis(
     return { ok: false, erro: mensagemErro(erro) };
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Importação de movimentação vinda do sistema legado                          */
+/* -------------------------------------------------------------------------- */
+
+export interface LinhaMovimento {
+  tipo: "entrada" | "saida";
+  ean?: string | null;
+  nome?: string | null;
+  local: string;
+  quantidade: number;
+  data?: string | null;
+  documento?: string | null;
+  motivo?: string | null;
+  custo_unitario?: number | null;
+  lote?: string | null;
+  data_validade?: string | null;
+  observacao?: string | null;
+}
+
+export interface ResultadoImportacaoMovimento {
+  importacao_id: string;
+  aplicadas: number;
+  ignoradas: number;
+  erros: { linha: number; item: string; erro: string }[];
+}
+
+/**
+ * Importa a movimentação do dia.
+ *
+ * O `hash` é a impressão digital do arquivo, calculada no navegador. É a
+ * primeira trava contra reimportação: o banco recusa um arquivo já processado.
+ * A segunda trava é por linha, dentro da função do banco.
+ */
+export async function importarMovimentos(
+  filialId: string,
+  arquivo: string,
+  hash: string,
+  linhas: LinhaMovimento[],
+): Promise<Resultado<ResultadoImportacaoMovimento>> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.estoqueImportar);
+
+    if (linhas.length === 0) {
+      return { ok: false, erro: "A planilha não tem nenhuma linha para importar." };
+    }
+
+    const supabase = await supabaseServidor();
+
+    const { data, error } = await supabase.rpc("fn_importar_movimentos", {
+      p_filial_id: filialId,
+      p_arquivo: arquivo,
+      p_hash: hash,
+      p_itens: linhas,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    const retorno = data as ResultadoImportacaoMovimento;
+
+    revalidatePath("/estoque");
+    revalidatePath("/estoque/movimentacoes");
+    revalidatePath("/painel");
+
+    return {
+      ok: true,
+      dados: retorno,
+      mensagem:
+        `${retorno.aplicadas} movimentações aplicadas` +
+        (retorno.ignoradas > 0 ? `, ${retorno.ignoradas} já existiam` : "") +
+        (retorno.erros.length > 0 ? `, ${retorno.erros.length} com erro` : "") +
+        ".",
+    };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+/** Histórico de importações da filial, para conferência. */
+export async function listarImportacoes(filialId: string): Promise<
+  Resultado<
+    {
+      id: string;
+      arquivo_nome: string;
+      total_linhas: number;
+      total_aplicadas: number;
+      total_ignoradas: number;
+      total_erros: number;
+      criado_em: string;
+      usuario: { nome: string } | null;
+    }[]
+  >
+> {
+  try {
+    const supabase = await supabaseServidor();
+
+    const { data, error } = await supabase
+      .from("importacoes_movimento")
+      .select(
+        "id, arquivo_nome, total_linhas, total_aplicadas, total_ignoradas, total_erros, criado_em, usuario:usuarios(nome)",
+      )
+      .eq("filial_id", filialId)
+      .order("criado_em", { ascending: false })
+      .limit(20);
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    return { ok: true, dados: (data ?? []) as never };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}

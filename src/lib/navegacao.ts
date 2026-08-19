@@ -49,6 +49,11 @@ export const NAVEGACAO: ItemNavegacao[] = [
       { rotulo: "Saída", href: "/estoque/saida", permissoes: [PERMISSOES.estoqueSaida] },
       { rotulo: "Ajuste", href: "/estoque/ajuste", permissoes: [PERMISSOES.estoqueAjustar] },
       { rotulo: "Movimentações", href: "/estoque/movimentacoes" },
+      {
+        rotulo: "Importar movimentação",
+        href: "/estoque/importar",
+        permissoes: [PERMISSOES.estoqueImportar],
+      },
     ],
   },
   {

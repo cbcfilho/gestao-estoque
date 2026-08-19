@@ -301,6 +301,100 @@ begin
   end;
 end $$;
 
+-- ------------------------------------ importacao de movimentos (0013)
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+declare
+  v_f1 uuid; v_saldo_antes numeric; v_saldo_depois numeric; v_r jsonb;
+  v_itens jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  select coalesce(sum(quantidade),0) into v_saldo_antes
+    from lotes_estoque le join produtos p on p.id = le.produto_id
+   where p.ean = '7891000100103' and le.filial_id = v_f1 and le.local = 'deposito';
+
+  v_itens := jsonb_build_array(
+    jsonb_build_object('tipo','entrada','ean','7891000100103','local','deposito',
+                       'quantidade',10,'documento','NF-001','data','2026-08-10',
+                       'custo_unitario','4.50','lote','L-FEV','data_validade','2026-10-31'),
+    jsonb_build_object('tipo','saida','ean','7891000100103','local','deposito',
+                       'quantidade',4,'documento','CF-100','data','2026-08-10','motivo','venda'),
+    -- produto que nao existe: deve virar erro sem derrubar o resto
+    jsonb_build_object('tipo','saida','ean','0000000000000','local','deposito',
+                       'quantidade',1,'documento','CF-101','data','2026-08-10')
+  );
+
+  v_r := fn_importar_movimentos(v_f1, 'movimento-10-08.xlsx', 'hash-teste-001', v_itens);
+
+  if (v_r->>'aplicadas')::int <> 2 then
+    raise exception 'FALHOU: esperava 2 aplicadas, veio %', v_r->>'aplicadas';
+  end if;
+  if jsonb_array_length(v_r->'erros') <> 1 then
+    raise exception 'FALHOU: esperava 1 erro, veio %', jsonb_array_length(v_r->'erros');
+  end if;
+  raise notice 'ok  importacao aplica linhas boas e reporta a linha ruim';
+
+  select coalesce(sum(quantidade),0) into v_saldo_depois
+    from lotes_estoque le join produtos p on p.id = le.produto_id
+   where p.ean = '7891000100103' and le.filial_id = v_f1 and le.local = 'deposito';
+
+  if v_saldo_depois <> v_saldo_antes + 10 - 4 then
+    raise exception 'FALHOU: saldo esperado %, veio %', v_saldo_antes + 6, v_saldo_depois;
+  end if;
+  raise notice 'ok  saldo refletiu entrada e saida importadas';
+
+  -- data do fato preservada, e nao a data de hoje
+  if not exists (
+    select 1 from movimentacoes m join produtos p on p.id = m.produto_id
+     where p.ean = '7891000100103' and m.data_hora::date = date '2026-08-10'
+  ) then
+    raise exception 'FALHOU: a movimentacao nao guardou a data informada na planilha';
+  end if;
+  raise notice 'ok  movimentacao gravada com a data do fato, nao a de hoje';
+
+  -- trava 1: mesmo arquivo (mesmo hash) nao entra de novo
+  begin
+    perform fn_importar_movimentos(v_f1, 'movimento-10-08.xlsx', 'hash-teste-001', v_itens);
+    raise exception 'FALHOU: reimportar o mesmo arquivo deveria ser bloqueado';
+  exception when unique_violation then
+    raise notice 'ok  reimportar o mesmo arquivo e bloqueado pelo hash';
+  end;
+
+  -- trava 2: arquivo diferente, mas as mesmas linhas sao puladas
+  v_r := fn_importar_movimentos(v_f1, 'movimento-10-08-corrigido.xlsx', 'hash-teste-002', v_itens);
+  if (v_r->>'aplicadas')::int <> 0 or (v_r->>'ignoradas')::int <> 2 then
+    raise exception 'FALHOU: esperava 0 aplicadas e 2 ignoradas, veio % e %',
+      v_r->>'aplicadas', v_r->>'ignoradas';
+  end if;
+  raise notice 'ok  linhas ja importadas sao puladas mesmo em arquivo novo';
+
+  select coalesce(sum(quantidade),0) into v_saldo_depois
+    from lotes_estoque le join produtos p on p.id = le.produto_id
+   where p.ean = '7891000100103' and le.filial_id = v_f1 and le.local = 'deposito';
+  if v_saldo_depois <> v_saldo_antes + 6 then
+    raise exception 'FALHOU: o saldo mudou na reimportacao — houve duplicidade';
+  end if;
+  raise notice 'ok  reimportacao nao alterou o saldo (sem duplicidade)';
+end $$;
+
+-- quem nao tem a permissao nao importa
+select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+do $$
+declare v_f uuid;
+begin
+  select filial_id into v_f from usuario_filiais
+   where usuario_id = '22222222-2222-2222-2222-222222222222' limit 1;
+  begin
+    perform fn_importar_movimentos(v_f, 'x.xlsx', 'hash-teste-999', '[]'::jsonb);
+    raise exception 'FALHOU: operador nao deveria importar movimentos';
+  exception when insufficient_privilege then
+    raise notice 'ok  importacao respeita a permissao estoque.importar';
+  end;
+end $$;
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
 -- ------------------------------------------ correcoes de inventario (0012)
 -- Desfazer contagem, excluir inventario e fechar a cobranca do kanban.
 select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
