@@ -3,6 +3,8 @@
 import {
   Check,
   CloudOff,
+  Pencil,
+  Undo2,
   Flag,
   Loader2,
   RefreshCw,
@@ -13,7 +15,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { fecharContagem, lancarContagem, listarItensContagem } from "@/actions/inventario";
+import {
+  desfazerContagem,
+  fecharContagem,
+  lancarContagem,
+  listarItensContagem,
+} from "@/actions/inventario";
 import { BuscaProduto, type ProdutoEncontrado } from "@/components/produtos/busca-produto";
 import { LeitorCodigoBarras } from "@/components/scanner/leitor-codigo-barras";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +77,8 @@ export function TelaContagem({
   const [quantidade, setQuantidade] = useState("");
   const [lote, setLote] = useState("");
   const [validade, setValidade] = useState("");
+  const [emEdicao, setEmEdicao] = useState<ItemContagem | null>(null);
+  const [novaQuantidade, setNovaQuantidade] = useState("");
   const [modalFechar, setModalFechar] = useState(false);
   const [zerarNaoContados, setZerarNaoContados] = useState(true);
 
@@ -246,6 +255,55 @@ export function TelaContagem({
       setQuantidade("");
       setLote("");
       setValidade("");
+    });
+  }
+
+  function abrirEdicao(item: ItemContagem) {
+    setEmEdicao(item);
+    setNovaQuantidade(String(item.quantidade_contada ?? ""));
+  }
+
+  function salvarEdicao() {
+    if (!emEdicao) return;
+
+    const qtd = Number(novaQuantidade);
+    if (Number.isNaN(qtd) || qtd < 0) {
+      toast.error("Informe uma quantidade válida.");
+      return;
+    }
+
+    iniciar(async () => {
+      // p_somar falso: substitui o valor, não acumula.
+      const r = await lancarContagem({
+        inventario_id: inventario.id,
+        produto_id: emEdicao.produto_id,
+        local: emEdicao.local,
+        quantidade: qtd,
+        lote: emEdicao.lote === "UNICO" ? "" : emEdicao.lote,
+        data_validade: emEdicao.data_validade ?? "",
+        somar: false,
+      });
+
+      if (!r.ok) {
+        toast.error(r.erro);
+        return;
+      }
+
+      toast.success(`${emEdicao.produto_nome}: contagem corrigida para ${numero(qtd)}.`);
+      setEmEdicao(null);
+      recarregarItens();
+    });
+  }
+
+  function desfazer(item: ItemContagem) {
+    iniciar(async () => {
+      const r = await desfazerContagem(item.item_id);
+      if (!r.ok) {
+        toast.error(r.erro);
+        return;
+      }
+      toast.success(r.mensagem);
+      recarregarItens();
     });
   }
 
@@ -444,11 +502,33 @@ export function TelaContagem({
                   </p>
                 </div>
                 {item.quantidade_contada !== null ? (
-                  <div className="shrink-0 text-right">
-                    <p className="font-semibold tabular">
-                      {numero(item.quantidade_contada)} {LABEL_UNIDADE[item.unidade]}
-                    </p>
-                    <p className="text-xs texto-suave">{dataHora(item.contado_em)}</p>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <div className="text-right">
+                      <p className="font-semibold tabular">
+                        {numero(item.quantidade_contada)} {LABEL_UNIDADE[item.unidade]}
+                      </p>
+                      <p className="text-xs texto-suave">{dataHora(item.contado_em)}</p>
+                    </div>
+                    <Botao
+                      variante="fantasma"
+                      tamanho="sm"
+                      disabled={pendente}
+                      onClick={() => abrirEdicao(item)}
+                      title="Corrigir a quantidade contada"
+                      aria-label={`Corrigir contagem de ${item.produto_nome}`}
+                    >
+                      <Pencil className="size-4" />
+                    </Botao>
+                    <Botao
+                      variante="fantasma"
+                      tamanho="sm"
+                      disabled={pendente}
+                      onClick={() => desfazer(item)}
+                      title="Desfazer a contagem deste item"
+                      aria-label={`Desfazer contagem de ${item.produto_nome}`}
+                    >
+                      <Undo2 className="size-4" />
+                    </Botao>
                   </div>
                 ) : (
                   <Badge tom="neutro">a contar</Badge>
@@ -469,6 +549,46 @@ export function TelaContagem({
         titulo={`Contando em ${LABEL_LOCAL[local]}`}
         continuo
       />
+
+      {emEdicao && (
+        <Modal
+          aberto
+          aoFechar={() => setEmEdicao(null)}
+          titulo="Corrigir contagem"
+          descricao={emEdicao.produto_nome}
+          tamanho="sm"
+          rodape={
+            <>
+              <Botao variante="contorno" onClick={() => setEmEdicao(null)} disabled={pendente}>
+                Cancelar
+              </Botao>
+              <Botao onClick={salvarEdicao} carregando={pendente}>
+                Salvar
+              </Botao>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <p className="text-sm texto-suave">
+              {emEdicao.lote !== "UNICO" && `Lote ${emEdicao.lote} · `}
+              {LABEL_LOCAL[emEdicao.local]}
+            </p>
+
+            <Campo
+              id="nova-quantidade"
+              type="number"
+              inputMode="decimal"
+              step="0.001"
+              min="0"
+              rotulo={`Quantidade contada (${LABEL_UNIDADE[emEdicao.unidade]})`}
+              value={novaQuantidade}
+              onChange={(e) => setNovaQuantidade(e.target.value)}
+              ajuda="O valor substitui a contagem anterior."
+              autoFocus
+            />
+          </div>
+        </Modal>
+      )}
 
       <Modal
         aberto={modalFechar}

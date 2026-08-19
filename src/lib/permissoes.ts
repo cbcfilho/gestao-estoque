@@ -30,6 +30,7 @@ export const PERMISSOES = {
   inventarioContar: "inventario.contar",
   inventarioAprovar: "inventario.aprovar",
   inventarioCancelar: "inventario.cancelar",
+  inventarioExcluir: "inventario.excluir",
 
   dashboardFilial: "dashboard.filial",
   dashboardConsolidado: "dashboard.consolidado",

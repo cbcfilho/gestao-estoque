@@ -162,6 +162,69 @@ export async function lancarContagemPorEan(
   }
 }
 
+/**
+ * Desfaz a contagem de um item.
+ *
+ * Se o item só existia por causa da contagem (produto achado na prateleira sem
+ * saldo no sistema), ele é removido da lista; caso contrário volta para
+ * "não contado", para ser conferido de novo.
+ */
+export async function desfazerContagem(
+  itemId: string,
+): Promise<Resultado<{ acao: "removido" | "contagem_desfeita" }>> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.inventarioContar);
+
+    const supabase = await supabaseServidor();
+    const { data, error } = await supabase.rpc("fn_desfazer_contagem", {
+      p_item_id: itemId,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    const retorno = data as { acao: "removido" | "contagem_desfeita" };
+
+    return {
+      ok: true,
+      dados: retorno,
+      mensagem:
+        retorno.acao === "removido"
+          ? "Item removido da contagem."
+          : "Contagem desfeita — o item voltou para a lista de pendentes.",
+    };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+/** Exclui definitivamente um inventário que ainda não foi aprovado. */
+export async function excluirInventario(
+  inventarioId: string,
+): Promise<Resultado<{ codigo: string; itens_removidos: number }>> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.inventarioExcluir);
+
+    const supabase = await supabaseServidor();
+    const { data, error } = await supabase.rpc("fn_excluir_inventario", {
+      p_inventario_id: inventarioId,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    const retorno = data as { codigo: string; itens_removidos: number };
+
+    revalidatePath("/inventario");
+
+    return {
+      ok: true,
+      dados: retorno,
+      mensagem: `Inventário ${retorno.codigo} excluído.`,
+    };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
 export async function fecharContagem(
   inventarioId: string,
   zerarNaoContados: boolean,

@@ -301,6 +301,106 @@ begin
   end;
 end $$;
 
+-- ------------------------------------------ correcoes de inventario (0012)
+-- Desfazer contagem, excluir inventario e fechar a cobranca do kanban.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+declare
+  v_f2 uuid; v_inv uuid; v_prod uuid; v_item uuid; v_r jsonb;
+begin
+  select id into v_f2 from filiais where codigo = 'F02';
+  select id into v_prod from produtos where ean = '7891000100103';
+
+  -- F02 tem 28 unidades na prateleira (veio da transferencia).
+  v_inv := fn_abrir_inventario(v_f2, 'parcial', array['prateleira']::tipo_local[]);
+
+  -- 1) desfazer contagem de item que existia no sistema: volta a "nao contado"
+  perform fn_lancar_contagem(v_inv, v_prod, 'prateleira', 25, 'L-FEV', current_date + 60);
+  select id into v_item from inventario_itens
+   where inventario_id = v_inv and produto_id = v_prod and quantidade_sistema > 0;
+
+  v_r := fn_desfazer_contagem(v_item);
+  if v_r->>'acao' <> 'contagem_desfeita' then
+    raise exception 'FALHOU: esperava contagem_desfeita, veio %', v_r->>'acao';
+  end if;
+  if (select quantidade_contada from inventario_itens where id = v_item) is not null then
+    raise exception 'FALHOU: a contagem nao foi desfeita';
+  end if;
+  raise notice 'ok  desfazer contagem devolve o item para "nao contado"';
+
+  -- 2) desfazer item que so existia por causa da contagem: some da lista
+  perform fn_lancar_contagem(
+    v_inv, (select id from produtos where ean = '7891000315507'), 'prateleira', 3);
+  select id into v_item from inventario_itens
+   where inventario_id = v_inv and quantidade_sistema = 0;
+
+  v_r := fn_desfazer_contagem(v_item);
+  if v_r->>'acao' <> 'removido' then
+    raise exception 'FALHOU: item criado na contagem deveria ser removido, veio %', v_r->>'acao';
+  end if;
+  raise notice 'ok  desfazer item de sobra remove a linha';
+
+  -- 3) excluir inventario nao aprovado
+  v_r := fn_excluir_inventario(v_inv);
+  if exists (select 1 from inventarios where id = v_inv) then
+    raise exception 'FALHOU: inventario nao foi excluido';
+  end if;
+  raise notice 'ok  inventario nao aprovado pode ser excluido';
+end $$;
+
+-- 4) inventario aprovado NAO pode ser excluido
+do $$
+declare v_inv uuid;
+begin
+  select id into v_inv from inventarios where status = 'aprovado' limit 1;
+  begin
+    perform fn_excluir_inventario(v_inv);
+    raise exception 'FALHOU: inventario aprovado nao deveria poder ser excluido';
+  exception when check_violation then
+    raise notice 'ok  inventario aprovado protegido contra exclusao';
+  end;
+end $$;
+
+-- 5) quem nao tem a permissao nao exclui
+select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+do $$
+declare v_inv uuid;
+begin
+  select id into v_inv from inventarios limit 1;
+  begin
+    perform fn_excluir_inventario(v_inv);
+    raise exception 'FALHOU: operador nao deveria excluir inventario';
+  exception when insufficient_privilege then
+    raise notice 'ok  exclusao respeita a permissao inventario.excluir';
+  end;
+end $$;
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+-- 6) aprovar o inventario conclui a cobranca mensal do kanban
+do $$
+declare
+  v_f uuid; v_compet date; v_inv uuid; v_tarefa uuid;
+begin
+  select filial_id, competencia into v_f, v_compet
+    from inventarios where status = 'aprovado' and competencia is not null limit 1;
+
+  v_tarefa := fn_criar_tarefa_sistema(
+    'Inventario mensal (teste)', 'cobranca', 'inventario', v_f,
+    current_date, 'alta', 'inventario_mensal',
+    v_f::text || ':' || to_char(v_compet, 'YYYY-MM'));
+
+  -- Reabre e aprova de novo para disparar o gatilho.
+  update inventarios set status = 'aguardando_aprovacao' where filial_id = v_f and competencia = v_compet;
+  perform fn_aprovar_inventario(
+    (select id from inventarios where filial_id = v_f and competencia = v_compet));
+
+  if (select status from tarefas where id = v_tarefa) <> 'concluido' then
+    raise exception 'FALHOU: a cobranca mensal do kanban continuou aberta apos a aprovacao';
+  end if;
+  raise notice 'ok  aprovar inventario conclui a cobranca mensal do kanban';
+end $$;
+
 -- --------------------------------------------------- ultimo acesso
 -- Entrar por link (ou por senha) deve refletir na tela de usuarios.
 do $$

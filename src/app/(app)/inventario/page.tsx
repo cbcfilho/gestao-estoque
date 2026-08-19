@@ -2,6 +2,7 @@ import { ClipboardCheck, Plus } from "lucide-react";
 import Link from "next/link";
 import type { Metadata } from "next";
 
+import { ExcluirInventario } from "./acoes-lista";
 import { Badge, type TomBadge } from "@/components/ui/badge";
 import { BotaoLink } from "@/components/ui/botao";
 import { Cartao, CartaoCabecalho } from "@/components/ui/cartao";
@@ -61,6 +62,7 @@ export default async function PaginaInventario() {
   );
 
   const podeAbrir = sessao.permissoes.includes(PERMISSOES.inventarioAbrir);
+  const podeExcluir = sessao.permissoes.includes(PERMISSOES.inventarioExcluir);
 
   return (
     <div className="flex flex-col gap-5">
@@ -141,6 +143,7 @@ export default async function PaginaInventario() {
                   <Th alinhar="direita">Acuracidade</Th>
                   <Th alinhar="direita">Impacto</Th>
                   <Th>Aberto em</Th>
+                  <Th alinhar="direita">Ações</Th>
                 </tr>
               </thead>
               <tbody>
@@ -181,6 +184,16 @@ export default async function PaginaInventario() {
                       {inv.status === "aprovado" ? moeda(inv.divergencia_liquida) : "—"}
                     </Td>
                     <Td className="text-sm tabular">{dataHora(inv.aberto_em)}</Td>
+                    <Td alinhar="direita">
+                      {podeExcluir && (
+                        <ExcluirInventario
+                          inventarioId={inv.inventario_id}
+                          codigo={inv.codigo}
+                          status={inv.status}
+                          itens={inv.itens_total}
+                        />
+                      )}
+                    </Td>
                   </Tr>
                 ))}
               </tbody>
