@@ -45,11 +45,11 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 64 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 68 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ajuste de
-inventário, RLS por filial, bloqueio por permissão, alcance do papel `anon`,
-idempotência do cron e imutabilidade das movimentações. Se você mexeu no SQL e
+inventário, RLS por filial, bloqueio por permissão, alcance dos papéis `anon` e
+`authenticated`, idempotência do cron e imutabilidade das movimentações. Se você mexeu no SQL e
 não rodou isso, não sabe se quebrou nada.
 
 Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
