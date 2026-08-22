@@ -842,6 +842,83 @@ end $$;
 
 select assert_eq('o bloco acima rodou mesmo como authenticated', current_user::text, 'authenticated');
 
+-- ---------------------------------------------------------------------------
+-- 0016: o gatilho continua disparando sem EXECUTE para authenticated
+--
+-- Este e o teste que decide a 0016. `tarefas` e gravada DIRETO pela tela, e
+-- fn_notificar_tarefa e um gatilho SECURITY DEFINER nessa tabela — entao ele
+-- dispara com o papel `authenticated` em vigor. O Postgres checa EXECUTE na
+-- criacao do gatilho e nao a cada disparo; se essa premissa estivesse errada,
+-- a 0016 quebraria a criacao de tarefa em producao e este bloco acusaria.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_f1 uuid; v_tarefa uuid;
+  -- Dois usuarios distintos de proposito: fn_notificar_tarefa nao notifica quem
+  -- cria tarefa para si mesmo, entao com um so o gatilho rodaria sem gravar nada
+  -- e o teste passaria sem testar. uuid literal porque o stub local nao da USAGE
+  -- do schema auth ao papel authenticated.
+  v_autor uuid := '11111111-1111-1111-1111-111111111111';
+  v_responsavel uuid := '22222222-2222-2222-2222-222222222222';
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  insert into tarefas (titulo, descricao, categoria, filial_id, tipo, criado_por, responsavel_id, prazo)
+  values ('Tarefa pos-0016', 'criada como authenticated', 'outro', v_f1, 'manual',
+          v_autor, v_responsavel, current_date + 1)
+  returning id into v_tarefa;
+
+  if v_tarefa is null then
+    raise exception 'FALHOU: authenticated nao conseguiu criar tarefa apos a 0016';
+  end if;
+
+  -- Guarda o id para conferir DEPOIS de largar o papel: a policy de notificacoes
+  -- e `usuario_id = auth.uid()`, entao o autor nao enxerga a notificacao que
+  -- nasceu para o responsavel. Contar aqui dentro daria zero mesmo com o gatilho
+  -- funcionando — o teste passaria a medir a RLS, nao o gatilho.
+  perform set_config('teste.tarefa_0016', v_tarefa::text, false);
+end $$;
+
 reset role;
+
+select assert_eq('gatilho disparou como authenticated mesmo sem EXECUTE', (
+  select count(*)::bigint from notificacoes
+   where tarefa_id = current_setting('teste.tarefa_0016')::uuid), 1::bigint);
+
+set role authenticated;
+
+-- E as nove agora fora do alcance de quem esta logado.
+select assert_eq('as 9 funcoes internas sairam do alcance do authenticated', (
+  select count(*)::bigint from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname in ('fn_criar_tarefa_sistema','fn_responsavel_padrao_filial',
+                       'auth_exige_permissao','auth_exige_filial','fn_novo_usuario_auth',
+                       'fn_notificar_tarefa','fn_notificar_atraso',
+                       'fn_sincroniza_ultimo_acesso','fn_concluir_tarefas_do_inventario')
+     and has_function_privilege('authenticated', p.oid, 'execute')), 0::bigint);
+
+-- Sem levar junto o que as telas usam.
+select assert_eq('as RPCs das telas seguem alcancaveis', (
+  select count(*)::bigint from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname in ('fn_registrar_entrada','fn_registrar_saida','fn_ajustar_estoque',
+                       'fn_criar_transferencia','fn_enviar_transferencia',
+                       'fn_receber_transferencia','fn_cancelar_transferencia',
+                       'fn_transferencia_direta','fn_abrir_inventario','fn_fechar_contagem',
+                       'fn_aprovar_inventario','fn_lancar_contagem','fn_lancar_contagem_por_ean',
+                       'fn_reabrir_contagem','fn_desfazer_contagem','fn_excluir_inventario',
+                       'fn_cancelar_inventario','fn_importar_movimentos',
+                       'fn_importar_posicao_inicial','fn_inventario_itens_para_contagem')
+     and has_function_privilege('authenticated', p.oid, 'execute')), 20::bigint);
+
+reset role;
+
+-- O cron nao foi tocado: ele usa service_role.
+select assert_eq('service_role ainda cria tarefa de sistema', (
+  select has_function_privilege('service_role', p.oid, 'execute') from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'fn_criar_tarefa_sistema'), true);
 
 select '=========== TODOS OS TESTES PASSARAM ===========' as resultado;
