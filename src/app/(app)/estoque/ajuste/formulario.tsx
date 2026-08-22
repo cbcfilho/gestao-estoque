@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { ajustarEstoque } from "@/actions/estoque";
 import { SeletorFilialLocal } from "@/components/estoque/seletor-filial-local";
+import { SeletorLote, rotuloLote } from "@/components/estoque/seletor-lote";
 import { useLotesDisponiveis } from "@/components/estoque/use-lotes";
 import { BuscaProduto, type ProdutoEncontrado } from "@/components/produtos/busca-produto";
 import { Botao } from "@/components/ui/botao";
@@ -14,7 +15,7 @@ import { Area, Campo, Selecao } from "@/components/ui/campo";
 import { Cartao, CartaoConteudo } from "@/components/ui/cartao";
 import { Alerta } from "@/components/ui/estados";
 import type { FilialComLocais } from "@/lib/filiais";
-import { LABEL_UNIDADE, data as formatarData, numero } from "@/lib/formato";
+import { LABEL_UNIDADE, numero } from "@/lib/formato";
 import { cn } from "@/lib/utils";
 import type { TipoLocal } from "@/types/database";
 
@@ -39,11 +40,21 @@ export function FormularioAjuste({
   const [lote, setLote] = useState("");
   const [validade, setValidade] = useState("");
   const [loteEscolhido, setLoteEscolhido] = useState("");
+  const [loteNaoEncontrado, setLoteNaoEncontrado] = useState(false);
+  // Ajuste positivo: id do lote existente que vai receber o saldo. Vazio = lote novo.
+  const [loteCredito, setLoteCredito] = useState("");
 
-  const { lotes, saldo } = useLotesDisponiveis(produto?.id, filialId, local);
+  const { lotes, carregando: carregandoLotes, saldo, chave: chaveLotes } = useLotesDisponiveis(
+    produto?.id,
+    filialId,
+    local,
+  );
 
   // Se o lote escolhido saiu da lista atual, volta ao automático (FEFO).
   const loteId = lotes.some((l) => l.id === loteEscolhido) ? loteEscolhido : "";
+
+  // Alvo do ajuste positivo: some da lista se o produto/local mudou.
+  const creditoEmLoteExistente = lotes.find((l) => l.id === loteCredito) ?? null;
 
   function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -59,6 +70,11 @@ export function FormularioAjuste({
       return;
     }
 
+    if (sentido === "negativo" && loteNaoEncontrado) {
+      toast.error("O lote informado não tem saldo neste local.");
+      return;
+    }
+
     iniciar(async () => {
       const resultado = await ajustarEstoque({
         produto_id: produto.id,
@@ -66,8 +82,12 @@ export function FormularioAjuste({
         local,
         quantidade: sentido === "positivo" ? valor : -valor,
         observacao,
-        lote,
-        data_validade: validade,
+        // Ajuste positivo credita por lote+validade: escolher um lote existente
+        // é o mesmo que redigitar o código dele sem errar.
+        lote: creditoEmLoteExistente ? creditoEmLoteExistente.lote : lote,
+        data_validade: creditoEmLoteExistente
+          ? (creditoEmLoteExistente.data_validade ?? "")
+          : validade,
         lote_id: loteId,
       });
 
@@ -83,6 +103,8 @@ export function FormularioAjuste({
       setLote("");
       setValidade("");
       setLoteEscolhido("");
+      setLoteNaoEncontrado(false);
+      setLoteCredito("");
       router.refresh();
     });
   }
@@ -165,40 +187,57 @@ export function FormularioAjuste({
           />
 
           {sentido === "positivo" ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Campo
-                id="lote"
-                rotulo="Lote"
-                value={lote}
-                onChange={(e) => setLote(e.target.value)}
-                ajuda="Vazio agrupa no lote único."
-              />
-              <Campo
-                id="validade"
-                type="date"
-                rotulo="Validade"
-                value={validade}
-                onChange={(e) => setValidade(e.target.value)}
-              />
-            </div>
+            <>
+              {lotes.length > 0 && (
+                <Selecao
+                  id="loteCredito"
+                  rotulo="Lote que vai receber"
+                  value={loteCredito}
+                  onChange={(e) => setLoteCredito(e.target.value)}
+                  ajuda="Escolha um lote que já existe aqui ou informe um novo abaixo."
+                >
+                  <option value="">Novo lote (informar abaixo)</option>
+                  {lotes.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {rotuloLote(l)}
+                    </option>
+                  ))}
+                </Selecao>
+              )}
+
+              {!creditoEmLoteExistente && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo
+                    id="lote"
+                    rotulo="Lote"
+                    value={lote}
+                    onChange={(e) => setLote(e.target.value)}
+                    ajuda="Vazio agrupa no lote único."
+                  />
+                  <Campo
+                    id="validade"
+                    type="date"
+                    rotulo="Validade"
+                    value={validade}
+                    onChange={(e) => setValidade(e.target.value)}
+                  />
+                </div>
+              )}
+            </>
           ) : (
-            lotes.length > 1 && (
-              <Selecao
-                id="loteId"
+            produto && (
+              <SeletorLote
+                key={chaveLotes}
+                lotes={lotes}
+                carregando={carregandoLotes}
+                valor={loteId}
+                aoMudar={(id, naoEncontrado) => {
+                  setLoteEscolhido(id);
+                  setLoteNaoEncontrado(naoEncontrado);
+                }}
                 rotulo="Lote a reduzir"
-                value={loteId}
-                onChange={(e) => setLoteEscolhido(e.target.value)}
                 ajuda="Sem escolher, reduz primeiro o lote que vence antes."
-              >
-                <option value="">Automático (FEFO)</option>
-                {lotes.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.lote}
-                    {l.data_validade ? ` · vence ${formatarData(l.data_validade)}` : ""}
-                    {` · ${numero(l.quantidade)} disponível`}
-                  </option>
-                ))}
-              </Selecao>
+              />
             )
           )}
 
@@ -215,7 +254,13 @@ export function FormularioAjuste({
       </Cartao>
 
       <div className="flex justify-end">
-        <Botao type="submit" carregando={pendente} tamanho="lg" variante="secundario">
+        <Botao
+          type="submit"
+          carregando={pendente}
+          tamanho="lg"
+          variante="secundario"
+          disabled={sentido === "negativo" && loteNaoEncontrado}
+        >
           {!pendente && <SlidersHorizontal className="size-4" />}
           Registrar ajuste
         </Botao>

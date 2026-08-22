@@ -508,4 +508,168 @@ begin
   raise notice 'ok  ultimo acesso espelhado do auth para a tabela usuarios';
 end $$;
 
+-- ------------------------------------------- lote preservado na transferência
+-- Estes casos ficam no fim de propósito: eles criam lotes novos na F01, e as
+-- contagens de inventário acima assertam sobre o estoque daquela filial.
+-- Transferência que atravessa mais de um lote: cada lote precisa chegar ao
+-- destino com o próprio código, a própria validade e o próprio custo. Antes da
+-- migration 0014 tudo desembarcava sob o primeiro lote da baixa.
+do $$
+declare v_prod uuid; v_f1 uuid; v_f3 uuid; v_tr uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000100103';
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_f3 from filiais where codigo = 'F03';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'cafeteria', 10, 5.00, 'MULTI-A', current_date + 10);
+  perform fn_registrar_entrada(v_prod, v_f1, 'cafeteria', 10, 6.00, 'MULTI-B', current_date + 300);
+
+  -- 15 unidades: FEFO tira 10 de MULTI-A (vence antes) e 5 de MULTI-B.
+  v_tr := fn_criar_transferencia(
+    v_f1, 'cafeteria', v_f3, 'prateleira',
+    jsonb_build_array(jsonb_build_object('produto_id', v_prod, 'quantidade', 15))
+  );
+  perform fn_enviar_transferencia(v_tr);
+  perform fn_receber_transferencia(v_tr);
+end $$;
+
+select assert_eq('transferencia multi-lote: MULTI-A chegou inteiro no destino', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F03' and le.lote = 'MULTI-A'), 10::numeric);
+
+select assert_eq('transferencia multi-lote: MULTI-B manteve o proprio codigo', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F03' and le.lote = 'MULTI-B'), 5::numeric);
+
+select assert_eq('transferencia multi-lote: validade do MULTI-B nao foi puxada para a do A', (
+  select le.data_validade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F03' and le.lote = 'MULTI-B'),
+  (current_date + 300)::date);
+
+select assert_eq('transferencia multi-lote: custo de cada lote preservado', (
+  select le.custo_unitario from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F03' and le.lote = 'MULTI-B'), 6.0000::numeric);
+
+-- Escolher o lote na origem: a saída sai daquele lote e é ele que entra lá.
+do $$
+declare v_prod uuid; v_f1 uuid; v_f4 uuid; v_tr uuid; v_lote uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000100103';
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_f4 from filiais where codigo = 'F04';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'cafeteria', 8, 7.00, 'ESCOLHIDO', current_date + 400);
+
+  select id into v_lote from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1
+     and local = 'cafeteria' and lote = 'ESCOLHIDO';
+
+  v_tr := fn_criar_transferencia(
+    v_f1, 'cafeteria', v_f4, 'prateleira',
+    jsonb_build_array(jsonb_build_object(
+      'produto_id', v_prod, 'quantidade', 3, 'lote_id', v_lote))
+  );
+  perform fn_enviar_transferencia(v_tr);
+  perform fn_receber_transferencia(v_tr);
+end $$;
+
+select assert_eq('lote escolhido na origem e o mesmo que entra no destino', (
+  select le.lote from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F04'), 'ESCOLHIDO');
+
+-- Cancelar em trânsito devolve cada lote para a origem, não tudo no primeiro.
+do $$
+declare v_prod uuid; v_f1 uuid; v_f5 uuid; v_tr uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000100103';
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_f5 from filiais where codigo = 'F05';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 6, 3.00, 'CANC-A', current_date + 20);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 6, 3.50, 'CANC-B', current_date + 25);
+
+  v_tr := fn_criar_transferencia(
+    v_f1, 'deposito', v_f5, 'prateleira',
+    jsonb_build_array(jsonb_build_object('produto_id', v_prod, 'quantidade', 9))
+  );
+  perform fn_enviar_transferencia(v_tr);
+  perform fn_cancelar_transferencia(v_tr, 'teste de estorno por lote');
+end $$;
+
+select assert_eq('estorno do cancelamento devolveu CANC-A completo', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F01'
+     and le.local = 'deposito' and le.lote = 'CANC-A'), 6::numeric);
+
+select assert_eq('estorno do cancelamento devolveu CANC-B completo', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000100103' and f.codigo = 'F01'
+     and le.local = 'deposito' and le.lote = 'CANC-B'), 6::numeric);
+
+
+-- Envio parcial: antes da 0014 esta chamada nem rodava — "parte" era ao mesmo
+-- tempo variável plpgsql e alias da subconsulta, e o Postgres recusava por
+-- ambiguidade. Só não aparecia porque nenhum teste enviava parcial.
+do $$
+declare v_prod uuid; v_f1 uuid; v_f5 uuid; v_tr uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000315507';
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_f5 from filiais where codigo = 'F05';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 20, 4.50, 'PARC-A', current_date + 15);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 20, 5.50, 'PARC-B', current_date + 500);
+
+  v_tr := fn_criar_transferencia(
+    v_f1, 'deposito', v_f5, 'prateleira',
+    jsonb_build_array(jsonb_build_object('produto_id', v_prod, 'quantidade', 30))
+  );
+
+  -- Envia 25 das 30 pedidas: FEFO tira 20 de PARC-A e 5 de PARC-B.
+  perform fn_enviar_transferencia(
+    v_tr,
+    (select jsonb_agg(jsonb_build_object('item_id', id, 'quantidade', 25))
+       from transferencia_itens where transferencia_id = v_tr)
+  );
+
+  -- Recebe 22 das 25: a falta de 3 sai do fim da fila (PARC-B) e vira perda.
+  perform fn_receber_transferencia(
+    v_tr,
+    (select jsonb_agg(jsonb_build_object('item_id', id, 'quantidade', 22))
+       from transferencia_itens where transferencia_id = v_tr)
+  );
+end $$;
+
+select assert_eq('envio parcial nao quebra com item_id informado', (
+  select coalesce(sum(le.quantidade), 0) from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F05'), 22::numeric);
+
+select assert_eq('recebimento parcial preencheu o lote que vence antes', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F05' and le.lote = 'PARC-A'), 20::numeric);
+
+select assert_eq('recebimento parcial: a falta saiu do ultimo lote', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F05' and le.lote = 'PARC-B'), 2::numeric);
+
+select assert_eq('perda em transito do envio parcial registrada', (
+  select sum(m.quantidade) from movimentacoes m join produtos p on p.id = m.produto_id
+   where p.ean = '7891000315507' and m.motivo = 'perda'), 3::numeric);
+
+select assert_eq('o que nao foi enviado continua na origem', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F01'
+     and le.local = 'deposito' and le.lote = 'PARC-B'), 15::numeric);
+
 select '=========== TODOS OS TESTES PASSARAM ===========' as resultado;

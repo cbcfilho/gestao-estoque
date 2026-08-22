@@ -7,10 +7,11 @@ import { toast } from "sonner";
 
 import { criarTransferencia } from "@/actions/transferencias";
 import { SeletorFilialLocal } from "@/components/estoque/seletor-filial-local";
+import { SeletorLote } from "@/components/estoque/seletor-lote";
 import { useLotesDisponiveis } from "@/components/estoque/use-lotes";
 import { BuscaProduto, type ProdutoEncontrado } from "@/components/produtos/busca-produto";
 import { Botao } from "@/components/ui/botao";
-import { Area, Campo, Checkbox, Selecao } from "@/components/ui/campo";
+import { Area, Campo, Checkbox } from "@/components/ui/campo";
 import { Cartao, CartaoCabecalho, CartaoConteudo } from "@/components/ui/cartao";
 import { Alerta } from "@/components/ui/estados";
 import { Tabela, TabelaContainer, Td, Th, Tr } from "@/components/ui/tabela";
@@ -63,12 +64,14 @@ export function FormularioTransferencia({
   const [produto, setProduto] = useState<ProdutoEncontrado | null>(null);
   const [quantidade, setQuantidade] = useState("");
   const [loteEscolhido, setLoteEscolhido] = useState("");
+  const [loteNaoEncontrado, setLoteNaoEncontrado] = useState(false);
 
-  const { lotes, saldo: saldoProduto } = useLotesDisponiveis(
-    produto?.id,
-    filialOrigem,
-    localOrigem,
-  );
+  const {
+    lotes,
+    carregando: carregandoLotes,
+    saldo: saldoProduto,
+    chave: chaveLotes,
+  } = useLotesDisponiveis(produto?.id, filialOrigem, localOrigem);
 
   // Se o lote escolhido saiu da lista atual, volta ao automático (FEFO).
   const loteId = lotes.some((l) => l.id === loteEscolhido) ? loteEscolhido : "";
@@ -89,6 +92,11 @@ export function FormularioTransferencia({
     const qtd = Number(quantidade);
     if (!qtd || qtd <= 0) {
       toast.error("Informe a quantidade.");
+      return;
+    }
+
+    if (loteNaoEncontrado) {
+      toast.error("O lote informado não tem saldo neste local.");
       return;
     }
 
@@ -125,6 +133,7 @@ export function FormularioTransferencia({
     setProduto(null);
     setQuantidade("");
     setLoteEscolhido("");
+    setLoteNaoEncontrado(false);
   }
 
   function enviar() {
@@ -257,26 +266,27 @@ export function FormularioTransferencia({
               onChange={(e) => setQuantidade(e.target.value)}
             />
 
-            {lotes.length > 1 && (
-              <Selecao
-                id="lote"
-                rotulo="Lote"
-                value={loteId}
-                onChange={(e) => setLoteEscolhido(e.target.value)}
-              >
-                <option value="">Automático (FEFO)</option>
-                {lotes.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.lote}
-                    {l.data_validade ? ` · ${formatarData(l.data_validade)}` : ""} ·{" "}
-                    {numero(l.quantidade)}
-                  </option>
-                ))}
-              </Selecao>
+            {produto && (
+              <SeletorLote
+                key={chaveLotes}
+                lotes={lotes}
+                carregando={carregandoLotes}
+                valor={loteId}
+                aoMudar={(id, naoEncontrado) => {
+                  setLoteEscolhido(id);
+                  setLoteNaoEncontrado(naoEncontrado);
+                }}
+                ajuda="O lote escolhido é o mesmo que entra no destino."
+              />
             )}
           </div>
 
-          <Botao type="button" variante="contorno" onClick={adicionarItem} disabled={!produto}>
+          <Botao
+            type="button"
+            variante="contorno"
+            onClick={adicionarItem}
+            disabled={!produto || loteNaoEncontrado}
+          >
             <Plus className="size-4" />
             Adicionar à transferência
           </Botao>

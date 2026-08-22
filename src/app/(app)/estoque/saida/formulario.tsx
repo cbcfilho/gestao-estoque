@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { registrarSaida } from "@/actions/estoque";
 import { SeletorFilialLocal } from "@/components/estoque/seletor-filial-local";
+import { SeletorLote } from "@/components/estoque/seletor-lote";
 import { useLotesDisponiveis } from "@/components/estoque/use-lotes";
 import { BuscaProduto, type ProdutoEncontrado } from "@/components/produtos/busca-produto";
 import { Botao } from "@/components/ui/botao";
@@ -14,13 +15,7 @@ import { Area, Campo, Selecao } from "@/components/ui/campo";
 import { Cartao, CartaoConteudo } from "@/components/ui/cartao";
 import { Alerta } from "@/components/ui/estados";
 import type { FilialComLocais } from "@/lib/filiais";
-import {
-  LABEL_MOTIVO,
-  LABEL_UNIDADE,
-  MOTIVOS_SAIDA,
-  data as formatarData,
-  numero,
-} from "@/lib/formato";
+import { LABEL_MOTIVO, LABEL_UNIDADE, MOTIVOS_SAIDA, numero } from "@/lib/formato";
 import type { MotivoMovimentacao, TipoLocal } from "@/types/database";
 
 export function FormularioSaida({
@@ -43,23 +38,35 @@ export function FormularioSaida({
   const [quantidade, setQuantidade] = useState("");
   const [motivo, setMotivo] = useState<MotivoMovimentacao>(motivoInicial);
   const [loteEscolhido, setLoteEscolhido] = useState("");
+  const [loteNaoEncontrado, setLoteNaoEncontrado] = useState(false);
   const [observacao, setObservacao] = useState("");
 
-  const { lotes, carregando: carregandoLotes, saldo } = useLotesDisponiveis(
-    produto?.id,
-    filialId,
-    local,
-  );
+  const {
+    lotes,
+    carregando: carregandoLotes,
+    saldo,
+    chave: chaveLotes,
+  } = useLotesDisponiveis(produto?.id, filialId, local);
 
   // Se o lote escolhido não pertence mais à lista atual, volta ao automático.
   const loteId = lotes.some((l) => l.id === loteEscolhido) ? loteEscolhido : "";
-  const saldoInsuficiente = Number(quantidade || 0) > saldo;
+
+  // Escolhido um lote, o teto passa a ser o saldo daquele lote, não o do local.
+  const disponivel = loteId
+    ? Number(lotes.find((l) => l.id === loteId)?.quantidade ?? 0)
+    : saldo;
+  const saldoInsuficiente = Number(quantidade || 0) > disponivel;
 
   function enviar(e: React.FormEvent) {
     e.preventDefault();
 
     if (!produto) {
       toast.error("Selecione o produto.");
+      return;
+    }
+
+    if (loteNaoEncontrado) {
+      toast.error("O lote informado não tem saldo neste local.");
       return;
     }
 
@@ -86,6 +93,7 @@ export function FormularioSaida({
       setQuantidade("");
       setObservacao("");
       setLoteEscolhido("");
+      setLoteNaoEncontrado(false);
       router.refresh();
     });
   }
@@ -149,23 +157,17 @@ export function FormularioSaida({
             ))}
           </Selecao>
 
-          {lotes.length > 1 && (
-            <Selecao
-              id="lote"
-              rotulo="Lote"
-              value={loteId}
-              onChange={(e) => setLoteEscolhido(e.target.value)}
-              ajuda="Sem escolher, o sistema baixa primeiro o lote que vence antes."
-            >
-              <option value="">Automático (FEFO)</option>
-              {lotes.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.lote}
-                  {l.data_validade ? ` · vence ${formatarData(l.data_validade)}` : " · sem validade"}
-                  {` · ${numero(l.quantidade)} disponível`}
-                </option>
-              ))}
-            </Selecao>
+          {produto && (
+            <SeletorLote
+              key={chaveLotes}
+              lotes={lotes}
+              carregando={carregandoLotes}
+              valor={loteId}
+              aoMudar={(id, naoEncontrado) => {
+                setLoteEscolhido(id);
+                setLoteNaoEncontrado(naoEncontrado);
+              }}
+            />
           )}
 
           <Area
@@ -183,7 +185,12 @@ export function FormularioSaida({
       </Cartao>
 
       <div className="flex justify-end">
-        <Botao type="submit" carregando={pendente} tamanho="lg" disabled={saldoInsuficiente}>
+        <Botao
+          type="submit"
+          carregando={pendente}
+          tamanho="lg"
+          disabled={saldoInsuficiente || loteNaoEncontrado}
+        >
           {!pendente && <ArrowUpFromLine className="size-4" />}
           Registrar saída
         </Botao>

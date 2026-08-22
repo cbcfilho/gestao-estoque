@@ -31,11 +31,19 @@ const TOM_STATUS: Record<StatusTransferencia, TomBadge> = {
   cancelada: "neutro",
 };
 
+/** Um lote da baixa na origem — é ele que entra, igual, no destino. */
+interface LoteEnviado {
+  lote: string;
+  data_validade: string | null;
+  quantidade: number;
+}
+
 interface ItemDetalhe {
   id: string;
   produto_id: string;
   lote: string;
   data_validade: string | null;
+  lotes_enviados: LoteEnviado[] | null;
   custo_unitario: number;
   quantidade_solicitada: number;
   quantidade_enviada: number | null;
@@ -162,11 +170,35 @@ export default async function PaginaTransferencia({
                       </Link>
                     </Td>
                     <Td className="text-sm">
-                      {item.lote}
-                      {item.data_validade && (
-                        <span className="block texto-suave">
-                          vence {formatarData(item.data_validade)}
-                        </span>
+                      {/* Quando a baixa atravessou mais de um lote, o resumo de
+                          uma linha esconderia os outros — e são eles que estão
+                          entrando no destino. */}
+                      {item.lotes_enviados && item.lotes_enviados.length > 1 ? (
+                        <ul className="flex flex-col gap-1">
+                          {item.lotes_enviados.map((l, indice) => (
+                            <li key={`${l.lote}-${indice}`}>
+                              {l.lote}
+                              <span className="texto-suave">
+                                {" "}
+                                · {numero(l.quantidade)}
+                              </span>
+                              {l.data_validade && (
+                                <span className="block texto-suave">
+                                  vence {formatarData(l.data_validade)}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <>
+                          {item.lote}
+                          {item.data_validade && (
+                            <span className="block texto-suave">
+                              vence {formatarData(item.data_validade)}
+                            </span>
+                          )}
+                        </>
                       )}
                     </Td>
                     <Td alinhar="direita">
