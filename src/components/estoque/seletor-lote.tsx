@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { LoteDisponivel } from "@/components/estoque/use-lotes";
 import { Campo, Selecao } from "@/components/ui/campo";
+import { Alerta } from "@/components/ui/estados";
 import { data as formatarData, numero } from "@/lib/formato";
 
 /** Valor reservado da lista para abrir o campo de digitação livre. */
@@ -12,6 +13,56 @@ const MANUAL = "__manual__";
 /** Compara código de lote ignorando caixa e espaço nas pontas. */
 function mesmoLote(a: string, b: string) {
   return a.trim().toLocaleLowerCase("pt-BR") === b.trim().toLocaleLowerCase("pt-BR");
+}
+
+/**
+ * Acha o lote a partir do que foi digitado.
+ *
+ * O mesmo código de lote pode existir com validades diferentes — `lotes_estoque`
+ * é chaveado por (produto, filial, local, lote, validade), e `fn_creditar_lote`
+ * casa pelos dois. Entrar 10un de "L-100" vencendo em março e 10un de "L-100"
+ * vencendo em setembro cria DUAS linhas, com custos próprios. Por isso o código
+ * sozinho nem sempre identifica o lote: quando ele se repete, a validade é o
+ * desempate, e sem ela a única resposta honesta é pedir.
+ */
+export function resolverLote(
+  lotes: LoteDisponivel[],
+  texto: string,
+  validade: string,
+): { loteId: string; erro: string | null } {
+  if (!texto.trim()) return { loteId: "", erro: null };
+
+  const mesmoCodigo = lotes.filter((l) => mesmoLote(l.lote, texto));
+
+  if (mesmoCodigo.length === 0) {
+    return { loteId: "", erro: "Nenhum lote com esse código tem saldo neste local." };
+  }
+
+  const candidatos = validade
+    ? mesmoCodigo.filter((l) => (l.data_validade ?? "") === validade)
+    : mesmoCodigo;
+
+  if (candidatos.length === 0) {
+    const disponiveis = mesmoCodigo
+      .map((l) => (l.data_validade ? formatarData(l.data_validade) : "sem validade"))
+      .join(", ");
+    return {
+      loteId: "",
+      erro: `Esse código existe aqui, mas com outra validade (${disponiveis}).`,
+    };
+  }
+
+  if (candidatos.length > 1) {
+    const disponiveis = candidatos
+      .map((l) => (l.data_validade ? formatarData(l.data_validade) : "sem validade"))
+      .join(", ");
+    return {
+      loteId: "",
+      erro: `Há mais de um lote com esse código. Informe a validade para escolher: ${disponiveis}.`,
+    };
+  }
+
+  return { loteId: candidatos[0].id, erro: null };
 }
 
 export function rotuloLote(lote: LoteDisponivel) {
@@ -51,6 +102,7 @@ export function SeletorLote({
 }) {
   const [manual, setManual] = useState(false);
   const [texto, setTexto] = useState("");
+  const [validade, setValidade] = useState("");
 
   if (carregando) {
     return (
@@ -72,20 +124,26 @@ export function SeletorLote({
 
     setManual(false);
     setTexto("");
+    setValidade("");
     aoMudar(escolhido, false);
   }
 
   function digitar(digitado: string) {
     setTexto(digitado);
-
-    if (!digitado.trim()) {
-      aoMudar("", false);
-      return;
-    }
-
-    const achado = lotes.find((l) => mesmoLote(l.lote, digitado));
-    aoMudar(achado?.id ?? "", !achado);
+    const r = resolverLote(lotes, digitado, validade);
+    aoMudar(r.loteId, Boolean(r.erro));
   }
+
+  function mudarValidade(nova: string) {
+    setValidade(nova);
+    const r = resolverLote(lotes, texto, nova);
+    aoMudar(r.loteId, Boolean(r.erro));
+  }
+
+  // Mesma funcao que os handlers usam: o que a tela mostra e o que foi enviado
+  // ao formulario nao podem divergir.
+  const resolucao = resolverLote(lotes, texto, validade);
+  const escolhido = lotes.find((l) => l.id === resolucao.loteId) ?? null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,22 +165,38 @@ export function SeletorLote({
 
       {manual && (
         <>
-          <Campo
-            id={`${id}-manual`}
-            rotulo="Código do lote"
-            value={texto}
-            onChange={(e) => digitar(e.target.value)}
-            list={`${id}-opcoes`}
-            autoFocus
-            autoComplete="off"
-            placeholder="Ex.: L-2405"
-            erro={
-              texto.trim() && !lotes.some((l) => mesmoLote(l.lote, texto))
-                ? "Nenhum lote com esse código tem saldo neste local."
-                : null
-            }
-            ajuda="Digite o código da etiqueta. Precisa ser um lote com saldo neste local."
-          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Campo
+              id={`${id}-manual`}
+              rotulo="Código do lote"
+              value={texto}
+              onChange={(e) => digitar(e.target.value)}
+              list={`${id}-opcoes`}
+              autoFocus
+              autoComplete="off"
+              placeholder="Ex.: L-2405"
+              ajuda="Código da etiqueta. Precisa ser um lote com saldo neste local."
+            />
+            <Campo
+              id={`${id}-validade`}
+              type="date"
+              rotulo="Validade (opcional)"
+              value={validade}
+              onChange={(e) => mudarValidade(e.target.value)}
+              ajuda="Só é necessária quando o mesmo código existe com validades diferentes."
+            />
+          </div>
+
+          {resolucao.erro ? (
+            <Alerta tom="erro">{resolucao.erro}</Alerta>
+          ) : (
+            escolhido && (
+              <Alerta tom="info">
+                Lote encontrado: <strong>{rotuloLote(escolhido)}</strong>
+              </Alerta>
+            )
+          )}
+
           <datalist id={`${id}-opcoes`}>
             {lotes.map((l) => (
               <option key={l.id} value={l.lote}>
