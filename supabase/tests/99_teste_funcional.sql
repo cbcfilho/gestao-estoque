@@ -672,4 +672,62 @@ select assert_eq('o que nao foi enviado continua na origem', (
    where p.ean = '7891000315507' and f.codigo = 'F01'
      and le.local = 'deposito' and le.lote = 'PARC-B'), 15::numeric);
 
+-- ------------------------------------------------ consumo da cafeteria por lote
+-- A tela de consumo passou a deixar escolher o lote. O caminho ja existia em
+-- fn_registrar_saida (p_lote_id), mas nunca tinha sido exercitado com o motivo
+-- 'consumo_interno' — que e o unico que entra pelo ramo de permissao propria da
+-- cafeteria. Escolher o lote precisa consumir DAQUELE lote, nao do FEFO.
+do $$
+declare v_prod uuid; v_f1 uuid; v_lote_longe uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000315507';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'cafeteria', 12, 4.00, 'CAFE-PERTO', current_date + 5);
+  perform fn_registrar_entrada(v_prod, v_f1, 'cafeteria', 12, 7.00, 'CAFE-LONGE', current_date + 400);
+
+  select id into v_lote_longe from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1
+     and local = 'cafeteria' and lote = 'CAFE-LONGE';
+
+  -- Consome 4 do lote de validade LONGA, contrariando o FEFO de proposito.
+  perform fn_registrar_saida(
+    v_prod, v_f1, 'cafeteria', 4, 'consumo_interno', v_lote_longe, 'copo derrubado'
+  );
+end $$;
+
+select assert_eq('consumo da cafeteria saiu do lote escolhido', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F01'
+     and le.local = 'cafeteria' and le.lote = 'CAFE-LONGE'), 8::numeric);
+
+select assert_eq('consumo da cafeteria nao tocou o lote que vence antes', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F01'
+     and le.local = 'cafeteria' and le.lote = 'CAFE-PERTO'), 12::numeric);
+
+select assert_eq('movimentacao registrou o lote consumido', (
+  select m.lote from movimentacoes m join produtos p on p.id = m.produto_id
+   where p.ean = '7891000315507' and m.motivo = 'consumo_interno'
+     and m.observacao = 'copo derrubado'), 'CAFE-LONGE');
+
+-- Sem escolher lote, o consumo volta a seguir o FEFO.
+do $$
+declare v_prod uuid; v_f1 uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000315507';
+  select id into v_f1 from filiais where codigo = 'F01';
+  perform fn_registrar_saida(
+    v_prod, v_f1, 'cafeteria', 3, 'consumo_interno', null, 'consumo do dia'
+  );
+end $$;
+
+select assert_eq('consumo sem lote escolhido seguiu o FEFO', (
+  select le.quantidade from lotes_estoque le
+    join produtos p on p.id = le.produto_id join filiais f on f.id = le.filial_id
+   where p.ean = '7891000315507' and f.codigo = 'F01'
+     and le.local = 'cafeteria' and le.lote = 'CAFE-PERTO'), 9::numeric);
+
 select '=========== TODOS OS TESTES PASSARAM ===========' as resultado;
