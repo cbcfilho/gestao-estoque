@@ -17,12 +17,16 @@ export interface LoteDisponivel {
  * O resultado guarda a chave (produto+filial+local) a que pertence. Assim,
  * ao trocar de produto, a lista some na hora porque a chave deixa de bater —
  * sem precisar de um efeito extra só para "limpar" o estado anterior.
+ *
+ * A chave também sai daqui para servir de `key` no seletor de lote: trocar de
+ * produto ou de local remonta o seletor, zerando de uma vez o modo manual e o
+ * texto digitado.
  */
 export function useLotesDisponiveis(
   produtoId: string | null | undefined,
   filialId: string,
   local: string,
-): { lotes: LoteDisponivel[]; carregando: boolean; saldo: number } {
+): { lotes: LoteDisponivel[]; carregando: boolean; saldo: number; chave: string } {
   const chave = produtoId ? `${produtoId}|${filialId}|${local}` : "";
   const [resultado, setResultado] = useState<{ chave: string; itens: LoteDisponivel[] }>({
     chave: "",
@@ -50,5 +54,6 @@ export function useLotesDisponiveis(
     lotes: atual,
     carregando: Boolean(chave) && resultado.chave !== chave,
     saldo: atual.reduce((total, lote) => total + Number(lote.quantidade), 0),
+    chave,
   };
 }
