@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 
+import { chavesDeAssinatura } from "@/lib/supabase/chaves-jwt";
 import { supabaseServidor } from "@/lib/supabase/server";
 import type { ChavePermissao } from "@/lib/permissoes";
 import type { Filial, Perfil, Usuario, UsuarioSessao } from "@/types/database";
@@ -12,16 +13,39 @@ import type { Filial, Perfil, Usuario, UsuarioSessao } from "@/types/database";
 export const obterSessao = cache(async (): Promise<UsuarioSessao | null> => {
   const supabase = await supabaseServidor();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims() e não getUser(): mesmo nível de checagem — a assinatura do JWT
+  // é conferida contra a chave pública do projeto (ES256) — mas sem uma ida à
+  // rede por render. Como esta função roda em toda página, e o Next faz
+  // prefetch de todos os links do menu, o getUser() aqui virava uma dezena de
+  // chamadas ao Auth por carregamento. Com o serviço de Auth engasgando de
+  // forma intermitente, era uma dezena de chances de a tela travar.
+  //
+  // `sub` é o id do usuário, que é tudo que se usa daqui para baixo. E quem
+  // barra de verdade continua sendo a RLS: as consultas abaixo vão com o JWT
+  // do usuário e o banco decide o que ele enxerga.
+  //
+  // O try/catch não é decoração: o getClaims() converte só erro de auth e
+  // relança o resto — um cookie corrompido estoura como SyntaxError do
+  // JSON.parse. Sem o catch isso viraria erro 500 na tela, em vez de tratar
+  // como "não logado" e mandar para o login. O getUser() antigo não tinha essa
+  // aresta porque ia à rede e voltava 401 comportadamente.
+  let usuarioId: string | undefined;
+  try {
+    // Chaves explícitas: o cache do supabase-js vive na instância do cliente,
+    // que aqui nasce e morre a cada requisição. Ver lib/supabase/chaves-jwt.ts.
+    const keys = await chavesDeAssinatura();
+    const { data: sessao } = await supabase.auth.getClaims(undefined, keys ? { keys } : {});
+    usuarioId = sessao?.claims?.sub;
+  } catch (erro) {
+    console.error("Sessão inválida ao ler os claims:", erro);
+  }
 
-  if (!user) return null;
+  if (!usuarioId) return null;
 
   const { data: usuario, error } = await supabase
     .from("usuarios")
     .select("*, perfil:perfis(*)")
-    .eq("id", user.id)
+    .eq("id", usuarioId)
     .single<Usuario & { perfil: Perfil }>();
 
   if (error || !usuario || !usuario.ativo) return null;
