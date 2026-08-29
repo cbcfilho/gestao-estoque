@@ -10,6 +10,11 @@ const ROTAS_PUBLICAS = [
   "/aceitar-convite",
   // Já tem sessão (aal1), mas ainda falta o segundo fator.
   "/verificar-2fa",
+  // O service worker guarda esta página no install como reserva de navegação.
+  // Sem ela aqui, um install feito deslogado segue o redirect e cacheia o
+  // /login com redirected=true — e o Chrome recusa servir resposta
+  // redirecionada a uma navegação (ERR_FAILED no lugar da página offline).
+  "/offline",
 ];
 
 function ehRotaPublica(pathname: string) {
