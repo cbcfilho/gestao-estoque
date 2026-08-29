@@ -7,6 +7,8 @@
  */
 
 export type TipoLocal = "deposito" | "prateleira" | "cafeteria";
+/** Ordenação da lista de contagem do inventário. Ver fn_inventario_itens_para_contagem. */
+export type OrdenacaoContagem = "recente" | "nome" | "codigo";
 export type EscopoPerfil = "global" | "filial";
 export type UnidadeMedida = "un" | "cx" | "pct" | "kg" | "g" | "l" | "ml";
 export type TipoMovimentacao = "entrada" | "saida" | "transferencia" | "ajuste";
