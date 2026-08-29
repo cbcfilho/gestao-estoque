@@ -435,6 +435,7 @@ export function TelaContagem({
               }}
               selecionado={produto}
               aoLimpar={() => setProduto(null)}
+              focarAoLimpar
               placeholder="Buscar produto para contar"
             />
 

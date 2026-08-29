@@ -29,6 +29,7 @@ export function BuscaProduto({
   selecionado,
   aoLimpar,
   autoFocus = false,
+  focarAoLimpar = false,
   placeholder = "Buscar por nome ou código de barras",
   filtrarInsumosCafeteria = false,
 }: {
@@ -36,6 +37,13 @@ export function BuscaProduto({
   selecionado?: ProdutoEncontrado | null;
   aoLimpar?: () => void;
   autoFocus?: boolean;
+  /**
+   * Devolve o foco ao campo de busca quando o produto é solto — pela tela que
+   * limpou depois de registrar, ou pelo X. Serve para lançamento em série,
+   * onde clicar no campo a cada item custa caro. Fora desse caso fica
+   * desligado: em tela de um lançamento só, roubar o foco atrapalha.
+   */
+  focarAoLimpar?: boolean;
   placeholder?: string;
   filtrarInsumosCafeteria?: boolean;
 }) {
@@ -124,6 +132,18 @@ export function BuscaProduto({
     document.addEventListener("mousedown", aoClicarFora);
     return () => document.removeEventListener("mousedown", aoClicarFora);
   }, []);
+
+  // Enquanto há produto escolhido, o input nem existe no DOM — sai do lugar
+  // para o cartão do produto. Quando o produto é solto o input monta de novo,
+  // sem foco, e é aí que este efeito o devolve. Num efeito, e não com um
+  // setTimeout no chamador, porque o efeito roda depois do DOM já atualizado:
+  // não há prazo a adivinhar, e a ordem vale igual para transição do React.
+  const tinhaProduto = useRef(false);
+  useEffect(() => {
+    const tem = Boolean(selecionado);
+    if (focarAoLimpar && tinhaProduto.current && !tem) inputRef.current?.focus();
+    tinhaProduto.current = tem;
+  }, [selecionado, focarAoLimpar]);
 
   function escolher(produto: ProdutoEncontrado) {
     aoSelecionar(produto);
