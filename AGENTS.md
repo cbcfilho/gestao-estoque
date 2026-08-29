@@ -45,12 +45,19 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 63 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 75 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
 da lista de contagem do inventário, ajuste de inventário, RLS por filial,
-bloqueio por permissão, idempotência do cron e imutabilidade das movimentações.
-Se você mexeu no SQL e não rodou isso, não sabe se quebrou nada.
+bloqueio por permissão, alcance dos papéis `anon` e `authenticated`,
+idempotência do cron e imutabilidade das movimentações. Se você mexeu no SQL e
+não rodou isso, não sabe se quebrou nada.
+
+Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
+tudo roda como `postgres` — que é superusuário e **ignora checagem de
+privilégio**. Teste sobre grant ou RLS colocado depois desse ponto passa mesmo
+com o privilégio errado. O bloco no fim do arquivo volta para `authenticated` de
+propósito, e é ele que protege as migrations de permissão.
 
 Migrations são aplicadas em ordem numérica e nunca editadas depois de aplicadas
 em produção — crie um arquivo novo.

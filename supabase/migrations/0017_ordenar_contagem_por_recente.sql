@@ -82,6 +82,16 @@ begin
 end;
 $$;
 
+-- drop + create troca o OID da função, e o Supabase concede EXECUTE a
+-- anon/authenticated/service_role de novo por padrão em toda função nova via
+-- ALTER DEFAULT PRIVILEGES (não é o PUBLIC clássico do Postgres, que a 0015
+-- já cobria — checado direto no pg_proc.proacl). Revoga do anon nominalmente
+-- antes de conceder ao authenticated, senão o buraco que a 0015 fechou volta
+-- sozinho para qualquer função recriada depois dela.
+revoke execute on function
+  fn_inventario_itens_para_contagem(uuid, tipo_local, text, boolean, text)
+  from public, anon;
+
 grant execute on function
   fn_inventario_itens_para_contagem(uuid, tipo_local, text, boolean, text)
   to authenticated;
