@@ -17,11 +17,27 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** Igual ao do supabase-js. Chave rotacionada entra em no máximo 10 minutos. */
-const VALIDADE_MS = 10 * 60 * 1000;
+/**
+ * Quanto tempo a chave serve sem sequer pensar em atualizar.
+ *
+ * Era 10 minutos, copiado do supabase-js, e isso se mostrou um erro caro: cada
+ * vencimento é uma chance de a busca cair numa janela ruim do GoTrue, e com 10
+ * minutos são dezenas de chances por hora sem ganho nenhum. Rotação de chave é
+ * evento raro, e quando acontece a atualização em segundo plano pega — e mesmo
+ * que não pegasse, a assinatura simplesmente não bateria e o acesso seria
+ * negado, que é o comportamento correto.
+ */
+const VALIDADE_MS = 6 * 60 * 60 * 1000;
 
-/** Prazo curto: sem chave a conferência cai para a rede, que é o que evitamos. */
-const PRAZO_BUSCA_MS = 5000;
+/**
+ * Prazo de UMA tentativa. Curto de propósito: o modo de falha observado não é
+ * "responde devagar", é "a conexão fica pendurada" — abandonar rápido e tentar
+ * de novo numa conexão nova vale mais do que esperar.
+ */
+const PRAZO_TENTATIVA_MS = 1500;
+
+/** Tentativas na única situação que ainda espera: sem chave nenhuma em mãos. */
+const TENTATIVAS = 3;
 
 /**
  * O tipo sai da própria assinatura do getClaims: não há um segundo tipo aqui
@@ -47,7 +63,7 @@ async function buscar(): Promise<Chave[] | null> {
   if (!url || !apikey) return null;
 
   const controlador = new AbortController();
-  const timer = setTimeout(() => controlador.abort(), PRAZO_BUSCA_MS);
+  const timer = setTimeout(() => controlador.abort(), PRAZO_TENTATIVA_MS);
 
   try {
     const resposta = await fetch(`${url}/auth/v1/.well-known/jwks.json`, {
@@ -66,18 +82,15 @@ async function buscar(): Promise<Chave[] | null> {
   }
 }
 
-/**
- * Devolve as chaves públicas, ou `undefined` quando não há nenhuma em mãos —
- * aí o getClaims segue o caminho dele (rede, ou getUser no caso de sessão
- * HS256 antiga). Nunca lança: falhar aqui pode custar desempenho, mas não pode
- * derrubar a autenticação.
- */
-export async function chavesDeAssinatura(): Promise<Chave[] | undefined> {
-  const agora = Date.now();
-
-  if (cache && agora - buscadoEm < VALIDADE_MS) return cache;
-
-  emAndamento ??= buscar().finally(() => {
+/** Busca com algumas tentativas curtas, compartilhada por quem chegar junto. */
+async function atualizar(tentativas: number): Promise<Chave[] | null> {
+  emAndamento ??= (async () => {
+    for (let i = 0; i < tentativas; i++) {
+      const novas = await buscar();
+      if (novas) return novas;
+    }
+    return null;
+  })().finally(() => {
     emAndamento = null;
   });
 
@@ -85,13 +98,38 @@ export async function chavesDeAssinatura(): Promise<Chave[] | undefined> {
 
   if (novas) {
     cache = novas;
-    buscadoEm = agora;
-    return novas;
+    buscadoEm = Date.now();
+  }
+  return novas;
+}
+
+/**
+ * Devolve as chaves públicas, ou `undefined` quando não há nenhuma em mãos —
+ * aí o getClaims segue o caminho dele. Nunca lança: falhar aqui pode custar
+ * desempenho, mas não pode derrubar a autenticação.
+ *
+ * A regra que importa: **com chave em mãos, ninguém espera pela rede.** Foi
+ * exatamente por esperar que a versão anterior derrubava sessão — a busca do
+ * JWKS é servida pelo mesmo GoTrue que vinha travando (medido: 23,02s e 12,15s
+ * às 22:42, enquanto o REST ia a 0,10–0,44s no mesmo segundo). Com a busca no
+ * caminho crítico, cada travada dessas virava prazo estourado no proxy, sessão
+ * tratada como inexistente e usuário jogado no login no meio da contagem.
+ *
+ * Chave vencida ainda confere assinatura, então servi-la enquanto a atualização
+ * corre por fora é seguro: se tiver rotacionado de verdade, a assinatura não
+ * bate e o acesso é negado — que é o correto, não uma brecha.
+ */
+export async function chavesDeAssinatura(): Promise<Chave[] | undefined> {
+  if (cache) {
+    // Vencida: atualiza por fora e devolve a que já está em mãos, agora.
+    if (Date.now() - buscadoEm >= VALIDADE_MS) {
+      void atualizar(1).catch(() => {});
+    }
+    return cache;
   }
 
-  // Deu ruim na busca: segue com o cache vencido em vez de forçar todo mundo
-  // à rede. Chave pública vencida por alguns minutos ainda confere assinatura;
-  // se tiver rotacionado de verdade, a assinatura não bate e o getClaims
-  // recusa — que é o comportamento correto, não uma brecha.
-  return cache ?? undefined;
+  // Única situação que ainda espera: instância nova, sem chave nenhuma. Aqui
+  // não há o que servir, então vale tentar — mas com prazo curto e algumas
+  // tentativas, em vez de uma espera longa numa conexão pendurada.
+  return (await atualizar(TENTATIVAS)) ?? undefined;
 }
