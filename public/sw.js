@@ -7,7 +7,7 @@
  *   - API/Supabase: sempre rede — saldo de estoque não pode vir de cache.
  * ========================================================================== */
 
-const VERSAO = "v1";
+const VERSAO = "v2";
 const CACHE_APP = `estoque-app-${VERSAO}`;
 const CACHE_ESTATICOS = `estoque-estaticos-${VERSAO}`;
 
@@ -65,11 +65,30 @@ self.addEventListener("fetch", (evento) => {
   }
 
   // Navegação: tenta a rede e cai para a página offline.
+  //
+  // Numa conexão que não caiu mas está lenta ou piscando (wifi de loja,
+  // celular com sinal fraco no meio de uma contagem), o fetch pode nunca
+  // resolver nem rejeitar — sem timeout, o catch() abaixo nunca dispara e a
+  // aba fica presa em "Carregando..." indefinidamente, sem cair pra página
+  // offline e sem deixar rastro nenhum no servidor (foi o que aconteceu:
+  // zero erro de runtime, zero 5xx, banco saudável — o travamento era só no
+  // navegador). O AbortController garante que 8 segundos sem resposta contam
+  // como "sem conexão" tanto quanto uma falha de rede de verdade.
   if (request.mode === "navigate") {
     evento.respondWith(
-      fetch(request).catch(() =>
-        caches.match("/offline").then((r) => r ?? new Response("Sem conexão", { status: 503 })),
-      ),
+      (async () => {
+        const controlador = new AbortController();
+        const tempoLimite = setTimeout(() => controlador.abort(), 8000);
+
+        try {
+          return await fetch(request, { signal: controlador.signal });
+        } catch {
+          const paginaOffline = await caches.match("/offline");
+          return paginaOffline ?? new Response("Sem conexão", { status: 503 });
+        } finally {
+          clearTimeout(tempoLimite);
+        }
+      })(),
     );
   }
 });
