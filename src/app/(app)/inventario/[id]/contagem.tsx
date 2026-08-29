@@ -25,7 +25,7 @@ import { BuscaProduto, type ProdutoEncontrado } from "@/components/produtos/busc
 import { LeitorCodigoBarras } from "@/components/scanner/leitor-codigo-barras";
 import { Badge } from "@/components/ui/badge";
 import { Botao } from "@/components/ui/botao";
-import { Campo, Checkbox } from "@/components/ui/campo";
+import { Campo, Checkbox, Selecao } from "@/components/ui/campo";
 import { Cartao, CartaoCabecalho, CartaoConteudo } from "@/components/ui/cartao";
 import { Alerta, CabecalhoPagina } from "@/components/ui/estados";
 import { Modal } from "@/components/ui/modal";
@@ -39,7 +39,7 @@ import {
   type ContagemPendente,
 } from "@/lib/offline";
 import { cn } from "@/lib/utils";
-import type { ItemContagem, TipoLocal, VwInventarioResumo } from "@/types/database";
+import type { ItemContagem, OrdenacaoContagem, TipoLocal, VwInventarioResumo } from "@/types/database";
 
 export function TelaContagem({
   inventario,
@@ -59,11 +59,16 @@ export function TelaContagem({
 
   const [local, setLocal] = useState<TipoLocal>(inventario.locais[0]);
   const [apenasPendentes, setApenasPendentes] = useState(false);
+  // "Recente" primeiro: é o que ajuda a achar o que acabou de ser contado
+  // numa lista de 70, 100 itens. Quem prefere a ordem antiga tem "nome" logo
+  // ao lado, e "código" serve pra conferir com a etiqueta em mãos.
+  const [ordenarPor, setOrdenarPor] = useState<OrdenacaoContagem>("recente");
 
-  // A lista guarda a que consulta pertence (local + filtro + versão). Trocar
-  // de aba já mostra "carregando" sem precisar de um efeito só para limpar.
+  // A lista guarda a que consulta pertence (local + filtro + ordem + versão).
+  // Trocar de aba já mostra "carregando" sem precisar de um efeito só para
+  // limpar.
   const [versao, setVersao] = useState(0);
-  const chaveLista = `${local}|${apenasPendentes}|${versao}`;
+  const chaveLista = `${local}|${apenasPendentes}|${ordenarPor}|${versao}`;
   const [lista, setLista] = useState<{ chave: string; itens: ItemContagem[] }>({
     chave: "",
     itens: [],
@@ -96,16 +101,18 @@ export function TelaContagem({
   useEffect(() => {
     let cancelado = false;
 
-    void listarItensContagem(inventario.id, local, undefined, apenasPendentes).then((r) => {
-      if (cancelado) return;
-      if (r.ok) setLista({ chave: chaveLista, itens: r.dados });
-      else toast.error(r.erro);
-    });
+    void listarItensContagem(inventario.id, local, undefined, apenasPendentes, ordenarPor).then(
+      (r) => {
+        if (cancelado) return;
+        if (r.ok) setLista({ chave: chaveLista, itens: r.dados });
+        else toast.error(r.erro);
+      },
+    );
 
     return () => {
       cancelado = true;
     };
-  }, [inventario.id, local, apenasPendentes, chaveLista]);
+  }, [inventario.id, local, apenasPendentes, ordenarPor, chaveLista]);
 
   /* --------------------------------------------------------- fila offline */
 
@@ -471,12 +478,25 @@ export function TelaContagem({
         <CartaoCabecalho
           titulo={`Itens em ${LABEL_LOCAL[local]}`}
           acao={
-            <Checkbox
-              id="pendentes"
-              rotulo="Só os que faltam"
-              checked={apenasPendentes}
-              onChange={(e) => setApenasPendentes(e.target.checked)}
-            />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Selecao
+                id="ordenar-por"
+                rotulo="Ordenar por"
+                className="w-auto min-w-40"
+                value={ordenarPor}
+                onChange={(e) => setOrdenarPor(e.target.value as OrdenacaoContagem)}
+              >
+                <option value="recente">Contado mais recente</option>
+                <option value="nome">Nome do produto</option>
+                <option value="codigo">Código (EAN)</option>
+              </Selecao>
+              <Checkbox
+                id="pendentes"
+                rotulo="Só os que faltam"
+                checked={apenasPendentes}
+                onChange={(e) => setApenasPendentes(e.target.checked)}
+              />
+            </div>
           }
         />
 

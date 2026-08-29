@@ -8,7 +8,7 @@ import { exigirPermissaoAction } from "@/lib/auth";
 import { PERMISSOES } from "@/lib/permissoes";
 import { supabaseServidor } from "@/lib/supabase/server";
 import { mensagemErro } from "@/lib/utils";
-import type { ItemContagem, TipoLocal } from "@/types/database";
+import type { ItemContagem, OrdenacaoContagem, TipoLocal } from "@/types/database";
 
 const locais = z.enum(["deposito", "prateleira", "cafeteria"]);
 
@@ -63,6 +63,7 @@ export async function listarItensContagem(
   local?: TipoLocal,
   busca?: string,
   apenasPendentes = false,
+  ordenarPor: OrdenacaoContagem = "recente",
 ): Promise<Resultado<ItemContagem[]>> {
   try {
     const supabase = await supabaseServidor();
@@ -72,6 +73,7 @@ export async function listarItensContagem(
       p_local: local ?? null,
       p_busca: busca || null,
       p_apenas_pendentes: apenasPendentes,
+      p_ordenar_por: ordenarPor,
     });
 
     if (error) return { ok: false, erro: mensagemErro(error) };

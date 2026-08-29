@@ -45,12 +45,12 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 56 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 63 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
-envio e recebimento parcial, consumo da cafeteria por lote escolhido, ajuste de
-inventário, RLS por filial, bloqueio por permissão, idempotência do cron e
-imutabilidade das movimentações. Se você mexeu no SQL e não rodou isso, não sabe
-se quebrou nada.
+envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
+da lista de contagem do inventário, ajuste de inventário, RLS por filial,
+bloqueio por permissão, idempotência do cron e imutabilidade das movimentações.
+Se você mexeu no SQL e não rodou isso, não sabe se quebrou nada.
 
 Migrations são aplicadas em ordem numérica e nunca editadas depois de aplicadas
 em produção — crie um arquivo novo.

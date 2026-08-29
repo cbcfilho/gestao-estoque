@@ -730,4 +730,120 @@ select assert_eq('consumo sem lote escolhido seguiu o FEFO', (
    where p.ean = '7891000315507' and f.codigo = 'F01'
      and le.local = 'cafeteria' and le.lote = 'CAFE-PERTO'), 9::numeric);
 
+-- --------------------------------------------- ordenacao da lista de contagem
+-- Tres produtos com nomes de proposito fora de ordem alfabetica e de EAN, para
+-- o teste distinguir cada criterio de ordenacao sem ambiguidade. Cada lancamento
+-- roda como statement isolado (nao dentro de um bloco do $$), porque dentro de
+-- um bloco so ha uma transacao e portanto um now() so — os tres contado_em
+-- sairiam identicos e a ordem "recente" não teria como ser testada.
+do $$
+declare
+  v_f1 uuid; v_inv uuid;
+  v_prod_zebra uuid; v_prod_abacaxi uuid; v_prod_melancia uuid;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  insert into produtos (nome, ean, valor_custo, valor_venda, estoque_minimo)
+  values ('Zebra Teste Ordenacao', '9990000000001', 1, 2, 1) returning id into v_prod_zebra;
+  insert into produtos (nome, ean, valor_custo, valor_venda, estoque_minimo)
+  values ('Abacaxi Teste Ordenacao', '9990000000002', 1, 2, 1) returning id into v_prod_abacaxi;
+  insert into produtos (nome, ean, valor_custo, valor_venda, estoque_minimo)
+  values ('Melancia Teste Ordenacao', '9990000000003', 1, 2, 1) returning id into v_prod_melancia;
+  insert into produto_filiais (produto_id, filial_id)
+  values (v_prod_zebra, v_f1), (v_prod_abacaxi, v_f1), (v_prod_melancia, v_f1);
+
+  v_inv := fn_abrir_inventario(v_f1, 'parcial', array['deposito']::tipo_local[]);
+
+  perform set_config('teste.inv_ordenacao', v_inv::text, false);
+  perform set_config('teste.prod_zebra', v_prod_zebra::text, false);
+  perform set_config('teste.prod_abacaxi', v_prod_abacaxi::text, false);
+  perform set_config('teste.prod_melancia', v_prod_melancia::text, false);
+end $$;
+
+-- Conta na ordem Zebra, Abacaxi, Melancia — nem alfabetica, nem por EAN — cada
+-- lancamento em sua propria transacao para o now() de cada um ser distinto.
+select fn_lancar_contagem(
+  current_setting('teste.inv_ordenacao')::uuid, current_setting('teste.prod_zebra')::uuid,
+  'deposito', 50, null, null, null, false);
+select pg_sleep(1.1);
+select fn_lancar_contagem(
+  current_setting('teste.inv_ordenacao')::uuid, current_setting('teste.prod_abacaxi')::uuid,
+  'deposito', 70, null, null, null, false);
+select pg_sleep(1.1);
+select fn_lancar_contagem(
+  current_setting('teste.inv_ordenacao')::uuid, current_setting('teste.prod_melancia')::uuid,
+  'deposito', 30, null, null, null, false);
+
+-- 'recente': o ultimo lancado (Melancia) primeiro, o primeiro (Zebra) por ultimo.
+select assert_eq('ordenacao recente: 1o lugar e o ultimo contado', (
+  select produto_nome from fn_inventario_itens_para_contagem(
+    current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'recente')
+   where produto_nome like '%Teste Ordenacao' limit 1), 'Melancia Teste Ordenacao');
+
+select assert_eq('ordenacao recente: ultimo lugar e o primeiro contado', (
+  select produto_nome from fn_inventario_itens_para_contagem(
+    current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'recente')
+   where produto_nome like '%Teste Ordenacao'
+   order by 1 desc limit 1 offset 0), 'Zebra Teste Ordenacao');
+
+-- Sem informar p_ordenar_por, o padrao e o mesmo que 'recente'.
+select assert_eq('ordenacao padrao (sem parametro) e recente', (
+  select array_agg(produto_nome) from (
+    select produto_nome from fn_inventario_itens_para_contagem(current_setting('teste.inv_ordenacao')::uuid)
+     where produto_nome like '%Teste Ordenacao'
+  ) t),
+  (select array_agg(produto_nome) from (
+    select produto_nome from fn_inventario_itens_para_contagem(
+      current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'recente')
+     where produto_nome like '%Teste Ordenacao'
+  ) t));
+
+-- 'nome': ordem alfabetica classica.
+select assert_eq('ordenacao por nome e alfabetica', (
+  select array_agg(produto_nome) from (
+    select produto_nome from fn_inventario_itens_para_contagem(
+      current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'nome')
+     where produto_nome like '%Teste Ordenacao'
+  ) t),
+  array['Abacaxi Teste Ordenacao', 'Melancia Teste Ordenacao', 'Zebra Teste Ordenacao']);
+
+-- 'codigo': ordem crescente de EAN (Zebra=…001, Abacaxi=…002, Melancia=…003).
+select assert_eq('ordenacao por codigo segue o EAN', (
+  select array_agg(produto_nome) from (
+    select produto_nome from fn_inventario_itens_para_contagem(
+      current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'codigo')
+     where produto_nome like '%Teste Ordenacao'
+  ) t),
+  array['Zebra Teste Ordenacao', 'Abacaxi Teste Ordenacao', 'Melancia Teste Ordenacao']);
+
+-- Um valor que nao e nenhuma das tres opcoes cai no mesmo lugar que 'nome' —
+-- silencioso de proposito: e o comportamento de antes desta migration, para
+-- quem chame a RPC sem o parametro novo (compatibilidade).
+select assert_eq('ordenacao com valor invalido cai para nome', (
+  select array_agg(produto_nome) from (
+    select produto_nome from fn_inventario_itens_para_contagem(
+      current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'nao-existe')
+     where produto_nome like '%Teste Ordenacao'
+  ) t),
+  array['Abacaxi Teste Ordenacao', 'Melancia Teste Ordenacao', 'Zebra Teste Ordenacao']);
+
+-- Itens ainda nao contados nao desaparecem da ordenacao 'recente' — so afundam
+-- para o fim, porque contado_em e nulo. Continuam aparecendo pra quem quer ver
+-- tudo; quem quer só o que falta já tem o filtro "Só os que faltam" na tela.
+--
+-- `with ordinality` numera as linhas na ordem exata emitida pela funcao — ao
+-- contrario de row_number() sem order by, que o Postgres nao garante preservar
+-- a ordem de entrada. O teste verifica o invariante direto: nenhum item
+-- contado pode aparecer DEPOIS de um pendente nessa ordenacao.
+select assert_eq('recente: nenhum contado aparece depois de um pendente', (
+  select coalesce(max(ordem) filter (where quantidade_contada is not null), 0)
+       < coalesce(min(ordem) filter (where quantidade_contada is null), 999999)
+    from fn_inventario_itens_para_contagem(
+           current_setting('teste.inv_ordenacao')::uuid, null, null, false, 'recente'
+         ) with ordinality as t(
+           item_id, produto_id, produto_nome, ean, unidade, local, lote,
+           data_validade, quantidade_contada, contado_em, ordem
+         )
+  ), true);
+
 select '=========== TODOS OS TESTES PASSARAM ===========' as resultado;
