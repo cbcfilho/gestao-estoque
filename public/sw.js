@@ -7,18 +7,104 @@
  *   - API/Supabase: sempre rede — saldo de estoque não pode vir de cache.
  * ========================================================================== */
 
-const VERSAO = "v2";
+const VERSAO = "v3";
 const CACHE_APP = `estoque-app-${VERSAO}`;
 const CACHE_ESTATICOS = `estoque-estaticos-${VERSAO}`;
 
 const ESSENCIAIS = ["/offline", "/manifest.webmanifest"];
 
+/*
+ * Reserva final de navegação, embutida no próprio arquivo.
+ *
+ * A reserva anterior era só a /offline do cache. Quando ela não estava lá — o
+ * install rodou sem rede, ou guardou uma resposta imprestável — o handler caía
+ * num Response de texto puro, e a aba mostrava ERR_FAILED em vez de qualquer
+ * explicação. Uma constante não depende de rede nem de cache: é a única reserva
+ * que não tem como faltar.
+ */
+const PAGINA_SEM_CONEXAO = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sem conexão · Estoque Cacau</title>
+<style>
+  :root { color-scheme: dark }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; padding: 1.5rem; text-align: center;
+    background: #262220; color: #e8e3df;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { margin: 0 0 .75rem; font-size: 1.125rem }
+  p { margin: 0 auto; max-width: 30rem; font-size: .875rem; line-height: 1.6; color: #a8a09a }
+  button {
+    margin-top: 1.5rem; padding: .625rem 1.25rem; font: inherit; font-size: .875rem;
+    color: #e8e3df; background: #3a3330; border: 1px solid #4a423e;
+    border-radius: .5rem; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <main>
+    <h1>Você está sem conexão</h1>
+    <p>As contagens de inventário feitas offline ficam salvas no aparelho e são
+    enviadas assim que a internet voltar. Outras telas precisam de conexão para
+    carregar os saldos.</p>
+    <button onclick="location.reload()">Tentar de novo</button>
+  </main>
+</body>
+</html>`;
+
+function respostaSemConexao() {
+  return new Response(PAGINA_SEM_CONEXAO, {
+    status: 503,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/*
+ * O Chrome recusa entregar a uma navegação uma resposta marcada como
+ * redirecionada, e o erro que ele mostra é ERR_FAILED — sem pista nenhuma de
+ * que veio do service worker. Foi o que aconteceu: a /offline estava atrás da
+ * checagem de sessão, então um install feito deslogado seguia o redirect e
+ * guardava no cache o /login com `redirected: true`; na primeira falha de rede
+ * o handler tentava servir aquilo e a aba morria. A rota agora é pública, e
+ * reconstruir a resposta a partir do corpo limpa a marca de qualquer jeito.
+ */
+async function semRedirecionamento(resposta) {
+  if (!resposta.redirected) return resposta;
+
+  return new Response(await resposta.blob(), {
+    status: resposta.status,
+    statusText: resposta.statusText,
+    headers: resposta.headers,
+  });
+}
+
+async function guardarEssencial(cache, caminho) {
+  try {
+    const resposta = await fetch(caminho, { cache: "reload" });
+    if (!resposta.ok) return;
+    await cache.put(caminho, await semRedirecionamento(resposta));
+  } catch {
+    // Ignora de propósito: ver o Promise.all abaixo.
+  }
+}
+
 self.addEventListener("install", (evento) => {
   evento.waitUntil(
-    caches
-      .open(CACHE_APP)
-      .then((cache) => cache.addAll(ESSENCIAIS))
-      .then(() => self.skipWaiting()),
+    (async () => {
+      const cache = await caches.open(CACHE_APP);
+
+      // Um a um, e não com addAll: o addAll é tudo-ou-nada, então um único
+      // essencial que não baixe aborta a instalação inteira e deixa o cache
+      // vazio — justamente no cenário de rede ruim em que a reserva mais faz
+      // falta. Aqui cada um falha por conta própria, e o que baixou fica.
+      await Promise.all(ESSENCIAIS.map((caminho) => guardarEssencial(cache, caminho)));
+
+      await self.skipWaiting();
+    })(),
   );
 });
 
@@ -51,15 +137,26 @@ self.addEventListener("fetch", (evento) => {
   // Estáticos versionados do Next.
   if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
     evento.respondWith(
-      caches.match(request).then(
-        (emCache) =>
-          emCache ??
-          fetch(request).then((resposta) => {
+      (async () => {
+        const emCache = await caches.match(request);
+        if (emCache) return emCache;
+
+        try {
+          const resposta = await fetch(request);
+          // Só guarda o que veio inteiro: um 404 ou um 502 gravado aqui ficaria
+          // servindo o erro de um arquivo com hash no nome para sempre.
+          if (resposta.ok) {
             const copia = resposta.clone();
             caches.open(CACHE_ESTATICOS).then((cache) => cache.put(request, copia));
-            return resposta;
-          }),
-      ),
+          }
+          return resposta;
+        } catch {
+          // Sem o catch a promise rejeitada virava erro de rede na tela. Um 504
+          // deixa o navegador tratar como recurso que faltou, e o resto da
+          // página ainda renderiza.
+          return new Response("", { status: 504, statusText: "Sem conexão" });
+        }
+      })(),
     );
     return;
   }
@@ -81,10 +178,18 @@ self.addEventListener("fetch", (evento) => {
         const tempoLimite = setTimeout(() => controlador.abort(), 8000);
 
         try {
-          return await fetch(request, { signal: controlador.signal });
+          const resposta = await fetch(request, { signal: controlador.signal });
+          // Navegou com rede: aproveita para repor a reserva se ela faltar.
+          // Sem isto, um install que pegou a rede num mau momento fica sem
+          // página offline até a próxima versão do service worker.
+          evento.waitUntil(reporPaginaOffline());
+          return resposta;
         } catch {
           const paginaOffline = await caches.match("/offline");
-          return paginaOffline ?? new Response("Sem conexão", { status: 503 });
+          // A marca de redirecionada faria o Chrome descartar a resposta e
+          // mostrar ERR_FAILED; melhor ir direto para a reserva embutida.
+          if (paginaOffline && !paginaOffline.redirected) return paginaOffline;
+          return respostaSemConexao();
         } finally {
           clearTimeout(tempoLimite);
         }
@@ -92,6 +197,14 @@ self.addEventListener("fetch", (evento) => {
     );
   }
 });
+
+async function reporPaginaOffline() {
+  const cache = await caches.open(CACHE_APP);
+  const guardada = await cache.match("/offline");
+  if (guardada && !guardada.redirected) return;
+
+  await guardarEssencial(cache, "/offline");
+}
 
 /* -----------------------------------------------------------------------------
  * Notificações push (Fase 5)
