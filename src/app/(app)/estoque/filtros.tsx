@@ -13,6 +13,8 @@ const FILTROS = [
   { valor: "todos", rotulo: "Todos" },
   { valor: "abaixo_minimo", rotulo: "Abaixo do mínimo" },
   { valor: "vencendo", rotulo: "Vencendo em 30 dias" },
+  { valor: "vencendo_60", rotulo: "Vencendo em 60 dias" },
+  { valor: "vencendo_90", rotulo: "Vencendo em 90 dias" },
   { valor: "vencido", rotulo: "Vencidos" },
 ] as const;
 

@@ -37,7 +37,14 @@ import type {
 
 export const metadata: Metadata = { title: "Estoque" };
 
-type Filtro = "todos" | "abaixo_minimo" | "vencendo" | "vencido";
+type Filtro = "todos" | "abaixo_minimo" | "vencendo" | "vencendo_60" | "vencendo_90" | "vencido";
+
+/** Dias do horizonte de cada filtro "vencendo em N dias". */
+const DIAS_POR_FILTRO: Partial<Record<Filtro, number>> = {
+  vencendo: 30,
+  vencendo_60: 60,
+  vencendo_90: 90,
+};
 
 function tomValidade(dias: number | null) {
   if (dias === null) return "neutro" as const;
@@ -80,7 +87,10 @@ export default async function PaginaEstoque({
   }
   if (localFiltro) consulta = consulta.eq("local", localFiltro);
   if (busca) consulta = consulta.or(`produto_nome.ilike.%${busca}%,ean.ilike.%${busca}%`);
-  if (filtro === "vencendo") consulta = consulta.lte("dias_para_vencer", 30).gte("dias_para_vencer", 0);
+  const diasVencendo = DIAS_POR_FILTRO[filtro];
+  if (diasVencendo !== undefined) {
+    consulta = consulta.lte("dias_para_vencer", diasVencendo).gte("dias_para_vencer", 0);
+  }
   if (filtro === "vencido") consulta = consulta.lt("dias_para_vencer", 0);
 
   const [{ data: lotesData }, { data: minimosData }] = await Promise.all([
