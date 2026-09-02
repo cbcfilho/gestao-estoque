@@ -36,7 +36,9 @@
       "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\"; npm run dev)",
       "PowerShell($caminho = \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\\\\supabase\\\\tests\\\\executar.ps1\"; $conteudo = [System.IO.File]::ReadAllText\\($caminho, [System.Text.UTF8Encoding]::new\\($false\\)\\); [System.IO.File]::WriteAllText\\($caminho, $conteudo, [System.Text.UTF8Encoding]::new\\($true\\)\\); \"Regravado com BOM UTF-8\"; Set-Location \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\"; & \".\\\\supabase\\\\tests\\\\executar.ps1\" 2>&1 | Select-String -Pattern \"ok  |TODOS OS TESTES|FALHOU|Tudo certo|Falhou em\" | Select-Object -Last 35)",
       "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\"; \"=== LINT ===\"; npm run lint 2>&1 | Select-Object -Last 6; \"=== BUILD ===\"; npm run build 2>&1 | Select-Object -Last 45)",
-      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\"; node --env-file=.env.local scripts/diagnostico.mjs)"
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\gestao_estoque\"; node --env-file=.env.local scripts/diagnostico.mjs)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)"
     ]
   }
 }
