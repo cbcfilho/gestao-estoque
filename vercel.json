@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/tarefas-automaticas",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/relatorio-vencimento-whatsapp",
+      "schedule": "0 11 * * 1"
     }
   ]
 }
