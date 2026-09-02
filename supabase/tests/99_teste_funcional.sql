@@ -290,6 +290,111 @@ begin
   raise notice 'ok  cron e idempotente (% tarefas)', n2;
 end $$;
 
+-- ---------------------------------------- relatorio semanal de vencimento
+-- Ainda como postgres (igual ao cron acima): so service_role deveria
+-- alcançar fn_relatorio_vencimento_semanal, e postgres (superusuario)
+-- ignora grant/RLS de qualquer jeito — mesma ressalva já documentada para
+-- a seção do cron no AGENTS.md.
+--
+-- Produto exclusivo deste teste, para o delta antes/depois não depender de
+-- nenhum lote já criado pelos testes anteriores.
+--
+-- teste.uid ainda está com o operador (só acessa F02) da seção de contagem
+-- cega, lá em cima — volta para o admin, senão fn_registrar_entrada barra
+-- por falta de acesso à filial F01.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+declare
+  v_prod uuid; v_f1 uuid; v_antes jsonb; v_depois jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  insert into produtos (nome, valor_custo, valor_venda, controla_validade)
+  values ('Produto Teste Vencimento', 10.00, 20.00, true)
+  returning id into v_prod;
+
+  insert into produto_filiais (produto_id, filial_id)
+  select v_prod, id from filiais;
+
+  -- 1) Um lote em cada faixa: o delta prova que cada `filter` bate certo e
+  -- que as quatro faixas não se sobrepõem.
+  v_antes := fn_relatorio_vencimento_semanal();
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 2, 10.00, 'V-VENCIDO', current_date - 5);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 3, 10.00, 'V-7D',      current_date + 5);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 4, 10.00, 'V-30D',     current_date + 20);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 5, 10.00, 'V-60D',     current_date + 45);
+
+  v_depois := fn_relatorio_vencimento_semanal();
+
+  if (v_depois->'vencidos'->>'lotes')::bigint - (v_antes->'vencidos'->>'lotes')::bigint <> 1
+     or (v_depois->'vencidos'->>'valor')::numeric - (v_antes->'vencidos'->>'valor')::numeric <> 20.00 then
+    raise exception 'FALHOU: delta de "vencidos" incorreto (antes=%, depois=%)', v_antes->'vencidos', v_depois->'vencidos';
+  end if;
+  if (v_depois->'dias_7'->>'lotes')::bigint - (v_antes->'dias_7'->>'lotes')::bigint <> 1
+     or (v_depois->'dias_7'->>'valor')::numeric - (v_antes->'dias_7'->>'valor')::numeric <> 30.00 then
+    raise exception 'FALHOU: delta de "dias_7" incorreto (antes=%, depois=%)', v_antes->'dias_7', v_depois->'dias_7';
+  end if;
+  if (v_depois->'dias_30'->>'lotes')::bigint - (v_antes->'dias_30'->>'lotes')::bigint <> 1
+     or (v_depois->'dias_30'->>'valor')::numeric - (v_antes->'dias_30'->>'valor')::numeric <> 40.00 then
+    raise exception 'FALHOU: delta de "dias_30" incorreto (antes=%, depois=%)', v_antes->'dias_30', v_depois->'dias_30';
+  end if;
+  if (v_depois->'dias_60'->>'lotes')::bigint - (v_antes->'dias_60'->>'lotes')::bigint <> 1
+     or (v_depois->'dias_60'->>'valor')::numeric - (v_antes->'dias_60'->>'valor')::numeric <> 50.00 then
+    raise exception 'FALHOU: delta de "dias_60" incorreto (antes=%, depois=%)', v_antes->'dias_60', v_depois->'dias_60';
+  end if;
+  raise notice 'ok  fn_relatorio_vencimento_semanal: uma faixa exclusiva por lote, sem sobreposição';
+
+  -- 2) Fronteira 7/8 dias: exatamente 7 cai em dias_7; exatamente 8 já é dias_30.
+  v_antes := fn_relatorio_vencimento_semanal();
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 1, 10.00, 'V-D7', current_date + 7);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 1, 10.00, 'V-D8', current_date + 8);
+  v_depois := fn_relatorio_vencimento_semanal();
+
+  if (v_depois->'dias_7'->>'lotes')::bigint - (v_antes->'dias_7'->>'lotes')::bigint <> 1 then
+    raise exception 'FALHOU: lote vencendo em exatamente 7 dias deveria entrar em dias_7';
+  end if;
+  if (v_depois->'dias_30'->>'lotes')::bigint - (v_antes->'dias_30'->>'lotes')::bigint <> 1 then
+    raise exception 'FALHOU: lote vencendo em exatamente 8 dias deveria entrar em dias_30, nao em dias_7';
+  end if;
+  raise notice 'ok  fronteira de 7/8 dias respeitada (7 = dias_7, 8 = dias_30)';
+
+  -- 3) Fronteira 60/61 dias: exatamente 60 cai em dias_60; 61 fica fora de
+  -- todas as quatro faixas (fora do horizonte do relatório).
+  v_antes := fn_relatorio_vencimento_semanal();
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 1, 10.00, 'V-D60', current_date + 60);
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 1, 10.00, 'V-D61', current_date + 61);
+  v_depois := fn_relatorio_vencimento_semanal();
+
+  if (v_depois->'dias_60'->>'lotes')::bigint - (v_antes->'dias_60'->>'lotes')::bigint <> 1 then
+    raise exception 'FALHOU: lote vencendo em exatamente 60 dias deveria entrar em dias_60';
+  end if;
+
+  if (
+    ((v_depois->'vencidos'->>'lotes')::bigint + (v_depois->'dias_7'->>'lotes')::bigint
+     + (v_depois->'dias_30'->>'lotes')::bigint + (v_depois->'dias_60'->>'lotes')::bigint)
+    -
+    ((v_antes->'vencidos'->>'lotes')::bigint + (v_antes->'dias_7'->>'lotes')::bigint
+     + (v_antes->'dias_30'->>'lotes')::bigint + (v_antes->'dias_60'->>'lotes')::bigint)
+  ) <> 1 then
+    raise exception 'FALHOU: lote vencendo em 61 dias nao deveria aparecer em nenhuma das quatro faixas';
+  end if;
+  raise notice 'ok  lote vencendo em 61 dias fica fora do horizonte de 60 dias do relatorio';
+end $$;
+
+select assert_eq('fn_relatorio_vencimento_semanal alcancavel so por service_role', (
+  select has_function_privilege('service_role', p.oid, 'execute') from pg_proc p
+   where p.proname = 'fn_relatorio_vencimento_semanal'), true);
+
+select assert_eq('fn_relatorio_vencimento_semanal fora do alcance do authenticated', (
+  select has_function_privilege('authenticated', p.oid, 'execute') from pg_proc p
+   where p.proname = 'fn_relatorio_vencimento_semanal'), false);
+
+select assert_eq('fn_relatorio_vencimento_semanal fora do alcance do anon', (
+  select has_function_privilege('anon', p.oid, 'execute') from pg_proc p
+   where p.proname = 'fn_relatorio_vencimento_semanal'), false);
+
 -- --------------------------------------------------------- imutabilidade
 do $$
 begin

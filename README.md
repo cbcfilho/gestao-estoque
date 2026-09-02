@@ -449,6 +449,74 @@ sino) — só não chegam ao celular com o app fechado.
 - **iPhone:** abra no Safari → Compartilhar → *Adicionar à Tela de Início*.
   No iOS, as notificações push **só funcionam** depois de instalado assim.
 
+### 3.11 Relatório semanal de vencimento por WhatsApp (opcional)
+
+Toda segunda-feira às 8h (horário de Brasília), a rotina manda a posição de
+estoque vencido e vencendo (até 7 dias, 8 a 30 dias, 31 a 60 dias) para um
+número de WhatsApp fixo, consolidada em todas as filiais. Usa a **WhatsApp
+Cloud API** da Meta — oficial, com uma cota gratuita mensal.
+
+**1. Crie (ou use) uma conta em [business.facebook.com](https://business.facebook.com)**
+(Meta Business Manager).
+
+**2. Crie um app tipo Business** em [developers.facebook.com](https://developers.facebook.com/apps),
+e adicione o produto **WhatsApp** a ele.
+
+**3. Pegue o Phone Number ID** em WhatsApp → Configuração da API. Dá para
+testar com o número de teste que a Meta fornece de graça, antes de verificar
+um número comercial próprio.
+
+**4. Gere um token permanente:** Configurações do Business → Usuários do
+sistema → crie um usuário de sistema → gere um token com a permissão
+`whatsapp_business_messaging`. O token que aparece por padrão na tela de
+testes expira em 24h — não é esse.
+
+**5. Crie o modelo de mensagem** em WhatsApp Manager → Modelos de mensagem:
+
+- Nome: `relatorio_semanal_vencimento`
+- Categoria: **Utilidade**
+- Idioma: Português (BR)
+- Corpo (copie exatamente; a Meta pede um valor de exemplo para cada `{{n}}`
+  na hora de submeter):
+
+  ```
+  📦 Relatório Semanal de Validade — {{1}}
+
+  🔴 Vencidos: {{2}} lotes · {{3}}
+  🟠 Vencendo em até 7 dias: {{4}} lotes · {{5}}
+  🟡 Vencendo em 8 a 30 dias: {{6}} lotes · {{7}}
+  🟢 Vencendo em 31 a 60 dias: {{8}} lotes · {{9}}
+
+  Acesse o sistema para o detalhamento por produto e filial.
+  ```
+
+  A aprovação costuma sair em minutos a poucas horas.
+
+**6. Cadastre na Vercel** (Sensitive **ligado** nas três primeiras):
+
+| Variável | Onde encontrar |
+|---|---|
+| `WHATSAPP_CLOUD_API_TOKEN` | Token permanente do usuário de sistema (passo 4) |
+| `WHATSAPP_CLOUD_API_PHONE_NUMBER_ID` | Tela de configuração da API (passo 3) |
+| `WHATSAPP_RELATORIO_DESTINO` | Número que recebe o relatório, só dígitos com DDI (ex.: `5511999999999`) |
+
+`WHATSAPP_RELATORIO_TEMPLATE_NOME` é opcional — só cadastre se o nome do
+modelo aprovado for diferente de `relatorio_semanal_vencimento`.
+
+Sem essas variáveis, a rotina continua rodando normalmente (o resumo fica no
+retorno da rota) — só não manda a mensagem.
+
+Para disparar manualmente e testar:
+
+```bash
+curl -H "Authorization: Bearer SEU_CRON_SECRET" https://seu-endereco.vercel.app/api/cron/relatorio-vencimento-whatsapp
+```
+
+> O plano gratuito da Vercel permite **2 cron jobs** — com este, o projeto
+> usa os dois (o outro é a rotina diária de tarefas). Se precisar de um
+> terceiro no futuro, um dos dois vai ter que virar plano pago ou os dois
+> terão que se consolidar numa rota só.
+
 ---
 
 ## 4. Como o sistema funciona

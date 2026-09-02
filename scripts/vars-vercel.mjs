@@ -16,6 +16,11 @@
 const publicas = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"];
 const secretas = ["SUPABASE_SERVICE_ROLE_KEY", "CRON_SECRET"];
 const opcionais = ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"];
+const opcionaisWhatsapp = [
+  "WHATSAPP_CLOUD_API_TOKEN",
+  "WHATSAPP_CLOUD_API_PHONE_NUMBER_ID",
+  "WHATSAPP_RELATORIO_DESTINO",
+];
 
 function bloco(titulo, chaves, instrucao) {
   const linhas = chaves
@@ -47,6 +52,12 @@ bloco(
   "BLOCO 3 — PUSH (opcional, só se você gerou as chaves VAPID)",
   opcionais,
   'Sensitive LIGADO. Pode pular por enquanto.',
+);
+
+bloco(
+  "BLOCO 4 — RELATÓRIO DE VENCIMENTO POR WHATSAPP (opcional)",
+  opcionaisWhatsapp,
+  'Sensitive LIGADO. Só depois de configurar a Cloud API da Meta (ver README, seção 3.11).',
 );
 
 console.log(`\n${"=".repeat(70)}`);
