@@ -218,7 +218,7 @@ export function TelaContagem({
       return;
     }
 
-    toast.success(`${produtoAlvo.nome}: ${numero(qtd)} ${LABEL_UNIDADE[produtoAlvo.unidade]}`);
+    toast.success(`${produtoAlvo.nome}: +${numero(qtd)} ${LABEL_UNIDADE[produtoAlvo.unidade]}`);
     recarregarItens();
   }
 
@@ -257,7 +257,11 @@ export function TelaContagem({
     }
 
     iniciar(async () => {
-      await registrar(produto, qtd, false, lote, validade);
+      // Soma à contagem já existente para este produto+local+lote+validade —
+      // é assim que a leitura por código de barras já funciona. Sem isso,
+      // contar uma segunda caixa igual (mesmo lote/validade) substituía a
+      // primeira em vez de somar, e o total ficava errado.
+      await registrar(produto, qtd, true, lote, validade);
       setProduto(null);
       setQuantidade("");
       setLote("");
@@ -450,6 +454,7 @@ export function TelaContagem({
                 rotulo={`Quantidade contada${produto ? ` (${LABEL_UNIDADE[produto.unidade]})` : ""}`}
                 value={quantidade}
                 onChange={(e) => setQuantidade(e.target.value)}
+                ajuda="Achou outra caixa do mesmo lote? Lance de novo: soma à contagem já feita."
               />
               <Campo
                 id="lote"
