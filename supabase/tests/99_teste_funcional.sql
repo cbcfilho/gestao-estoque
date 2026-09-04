@@ -48,6 +48,76 @@ select p.id, f.id from produtos p cross join filiais f;
 set role authenticated;
 select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------------------------------------------- RLS de usuarios sem recursao
+-- Bug de produção: usuarios_update_proprio comparava perfil_id/ativo com uma
+-- subconsulta direta em usuarios ("select ... from usuarios where id =
+-- auth.uid()") dentro da própria policy de usuarios — Postgres detecta isso
+-- como "infinite recursion detected in policy for relation usuarios" em
+-- QUALQUER update na tabela, não só ao editar o próprio usuário. Corrigido
+-- embrulhando a leitura em funções SECURITY DEFINER (0020).
+do $$
+declare v_perfil_gerente uuid;
+begin
+  select id into v_perfil_gerente from perfis where chave = 'gerente';
+
+  -- Cenário exato do bug reportado: admin edita o registro de OUTRO usuário.
+  update usuarios set nome = 'Operador Renomeado', perfil_id = v_perfil_gerente
+   where email = 'op@teste.com';
+
+  if (select nome from usuarios where email = 'op@teste.com') <> 'Operador Renomeado' then
+    raise exception 'FALHOU: admin nao conseguiu editar o registro de outro usuario';
+  end if;
+
+  -- Devolve o perfil original, para não interferir nos testes de permissão mais abaixo.
+  update usuarios set nome = 'Operador', perfil_id = (select id from perfis where chave = 'operador')
+   where email = 'op@teste.com';
+
+  raise notice 'ok  admin edita o registro de outro usuario sem recursao de RLS';
+end $$;
+
+do $$
+begin
+  perform set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+
+  -- O próprio usuário pode editar o próprio nome.
+  update usuarios set nome = 'Operador Renomeado Por Si' where id = '22222222-2222-2222-2222-222222222222';
+
+  if (select nome from usuarios where id = '22222222-2222-2222-2222-222222222222') <> 'Operador Renomeado Por Si' then
+    raise exception 'FALHOU: usuario nao conseguiu editar o proprio nome';
+  end if;
+
+  raise notice 'ok  usuario edita o proprio nome sem recursao de RLS';
+end $$;
+
+do $$
+declare v_bloqueado boolean; v_perfil_antes uuid; v_perfil_gerente uuid;
+begin
+  select perfil_id into v_perfil_antes from usuarios where id = '22222222-2222-2222-2222-222222222222';
+  select id into v_perfil_gerente from perfis where chave = 'gerente';
+
+  -- Sem usuarios.gerenciar, o operador NAO pode trocar o próprio perfil —
+  -- só nome/telefone são editáveis por quem edita a si mesmo. Regra de
+  -- negócio preservada pela correção.
+  begin
+    update usuarios set perfil_id = v_perfil_gerente where id = '22222222-2222-2222-2222-222222222222';
+    v_bloqueado := false;
+  exception when others then
+    v_bloqueado := true;
+  end;
+
+  if not v_bloqueado then
+    raise exception 'FALHOU: operador conseguiu trocar o proprio perfil, deveria ser bloqueado';
+  end if;
+
+  if (select perfil_id from usuarios where id = '22222222-2222-2222-2222-222222222222') <> v_perfil_antes then
+    raise exception 'FALHOU: perfil do operador mudou mesmo com o bloqueio';
+  end if;
+
+  raise notice 'ok  operador continua sem poder trocar o proprio perfil (RLS preservada)';
+end $$;
+
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
 -- ------------------------------------------------------------------ entradas
 do $$
 declare
