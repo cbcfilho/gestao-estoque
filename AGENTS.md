@@ -45,15 +45,17 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 81 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 84 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
 da lista de contagem do inventário, ajuste de inventário, RLS por filial,
 bloqueio por permissão, alcance dos papéis `anon` e `authenticated`,
-idempotência do cron, imutabilidade das movimentações e o resumo semanal de
+idempotência do cron, imutabilidade das movimentações, o resumo semanal de
 vencimento por faixa exclusiva (delta antes/depois, fronteiras de 7/8 e 60/61
-dias, alcance restrito a `service_role`). Se você mexeu no SQL e não rodou
-isso, não sabe se quebrou nada.
+dias, alcance restrito a `service_role`) e a edição de usuário sem recursão de
+RLS (editar outro usuário, editar o próprio nome, e o próprio perfil
+continuar bloqueado). Se você mexeu no SQL e não rodou isso, não sabe se
+quebrou nada.
 
 Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
 tudo roda como `postgres` — que é superusuário e **ignora checagem de
