@@ -554,6 +554,56 @@ begin
   raise notice 'ok  reimportacao nao alterou o saldo (sem duplicidade)';
 end $$;
 
+-- Lote e validade entram na chave de deduplicacao (0021): duas entradas do
+-- mesmo produto, mesmo dia, mesmo documento (ou nenhum), mas de LOTES
+-- diferentes, sao linhas distintas — nao duplicata uma da outra.
+do $$
+declare
+  v_f1 uuid; v_saldo_antes numeric; v_saldo_depois numeric; v_r jsonb;
+  v_itens jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  select coalesce(sum(quantidade),0) into v_saldo_antes
+    from lotes_estoque le join produtos p on p.id = le.produto_id
+   where p.ean = '7891000100103' and le.filial_id = v_f1 and le.local = 'deposito';
+
+  -- Mesmo produto, mesmo dia, mesmo documento — só o lote (e a validade) mudam.
+  v_itens := jsonb_build_array(
+    jsonb_build_object('tipo','entrada','ean','7891000100103','local','deposito',
+                       'quantidade',5,'documento','NF-002','data','2026-08-11',
+                       'custo_unitario','4.50','lote','L-MAR','data_validade','2026-11-30'),
+    jsonb_build_object('tipo','entrada','ean','7891000100103','local','deposito',
+                       'quantidade',5,'documento','NF-002','data','2026-08-11',
+                       'custo_unitario','4.50','lote','L-ABR','data_validade','2026-12-31')
+  );
+
+  v_r := fn_importar_movimentos(v_f1, 'lotes-diferentes.xlsx', 'hash-teste-003', v_itens);
+
+  if (v_r->>'aplicadas')::int <> 2 or (v_r->>'ignoradas')::int <> 0 then
+    raise exception 'FALHOU: lotes diferentes deveriam ser 2 linhas aplicadas, veio aplicadas=% ignoradas=%',
+      v_r->>'aplicadas', v_r->>'ignoradas';
+  end if;
+  raise notice 'ok  lotes diferentes no mesmo dia/documento nao sao tratados como duplicata';
+
+  select coalesce(sum(quantidade),0) into v_saldo_depois
+    from lotes_estoque le join produtos p on p.id = le.produto_id
+   where p.ean = '7891000100103' and le.filial_id = v_f1 and le.local = 'deposito';
+  if v_saldo_depois <> v_saldo_antes + 10 then
+    raise exception 'FALHOU: saldo esperado %, veio %', v_saldo_antes + 10, v_saldo_depois;
+  end if;
+  raise notice 'ok  saldo recebeu as duas entradas de lotes diferentes';
+
+  -- Reimportar as MESMAS linhas (mesmo lote, mesma validade) continua sendo
+  -- pego como duplicata — a correção não afrouxou a proteção original.
+  v_r := fn_importar_movimentos(v_f1, 'lotes-diferentes-de-novo.xlsx', 'hash-teste-004', v_itens);
+  if (v_r->>'aplicadas')::int <> 0 or (v_r->>'ignoradas')::int <> 2 then
+    raise exception 'FALHOU: reimportar os mesmos lotes deveria ser 100%% ignorado, veio aplicadas=% ignoradas=%',
+      v_r->>'aplicadas', v_r->>'ignoradas';
+  end if;
+  raise notice 'ok  reimportar exatamente o mesmo lote continua sendo bloqueado';
+end $$;
+
 -- quem nao tem a permissao nao importa
 select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
 do $$
