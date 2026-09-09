@@ -171,6 +171,7 @@ export const LABEL_MOTIVO: Record<MotivoMovimentacao, string> = {
   ajuste_negativo: "Ajuste negativo",
   envio_transferencia: "Envio de transferência",
   ajuste_inventario: "Ajuste de inventário",
+  estorno: "Estorno",
 };
 
 export const MOTIVOS_ENTRADA: MotivoMovimentacao[] = [

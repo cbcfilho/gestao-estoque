@@ -45,7 +45,7 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 87 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 101 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
 da lista de contagem do inventário, ajuste de inventário, RLS por filial,
@@ -54,10 +54,15 @@ idempotência do cron, imutabilidade das movimentações, o resumo semanal de
 vencimento por faixa exclusiva (delta antes/depois, fronteiras de 7/8 e 60/61
 dias, alcance restrito a `service_role`), a edição de usuário sem recursão de
 RLS (editar outro usuário, editar o próprio nome, e o próprio perfil
-continuar bloqueado) e a deduplicação da importação de movimentos considerando
+continuar bloqueado), a deduplicação da importação de movimentos considerando
 lote e validade (lotes diferentes no mesmo dia/documento não colidem; o mesmo
-lote reimportado continua bloqueado). Se você mexeu no SQL e não rodou isso,
-não sabe se quebrou nada.
+lote reimportado continua bloqueado) e a correção de movimentações (corrigir
+quantidade, filial e lote/validade acerta o saldo; estorno de saída devolve ao
+lote com o custo original; estorno de entrada já consumida é barrado;
+transferência e ajuste de inventário são barrados pela guarda própria — o teste
+confere a mensagem, não só o código de erro; correção dupla bloqueada; operador
+sem `estoque.corrigir` não estorna; a movimentação original segue intacta). Se
+você mexeu no SQL e não rodou isso, não sabe se quebrou nada.
 
 Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
 tudo roda como `postgres` — que é superusuário e **ignora checagem de

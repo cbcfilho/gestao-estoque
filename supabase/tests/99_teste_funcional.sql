@@ -337,6 +337,281 @@ begin
   end;
 end $$;
 
+-- ------------------------------------ correcao de movimentacoes (0022)
+-- Fica aqui de propósito, ANTES do `reset role` da seção seguinte: daí para
+-- baixo tudo roda como `postgres`, que ignora checagem de privilégio, e o
+-- teste de permissão passaria mesmo com o grant errado.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+-- Produto exclusivo desta seção: os lotes dos testes acima já passaram por
+-- FEFO, transferência e inventário, e o saldo deles não é previsível aqui.
+do $$
+declare v_prod uuid;
+begin
+  insert into produtos (nome, ean, valor_custo, valor_venda, estoque_minimo, controla_validade)
+  values ('Produto Teste Correcao', '7891000900001', 10.00, 20.00, 0, true)
+  returning id into v_prod;
+
+  insert into produto_filiais (produto_id, filial_id)
+  select v_prod, f.id from filiais f;
+end $$;
+
+do $$
+declare v_prod uuid; v_f1 uuid; v_mov uuid; v_saldo numeric;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  -- Digitou 100 onde o certo era 60.
+  v_mov := fn_registrar_entrada(v_prod, v_f1, 'deposito', 100, 10.00, 'L-CORR', current_date + 90);
+  perform fn_corrigir_movimentacao(
+    v_mov, v_f1, 'deposito', 60, 'L-CORR', current_date + 90, 'Digitou 100 no lugar de 60');
+
+  select coalesce(sum(quantidade), 0) into v_saldo from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1 and local = 'deposito' and lote = 'L-CORR';
+
+  if v_saldo <> 60 then
+    raise exception 'FALHOU: saldo apos corrigir a quantidade deveria ser 60, veio %', v_saldo;
+  end if;
+  raise notice 'ok  corrigir a quantidade de uma entrada acerta o saldo do lote (=60)';
+end $$;
+
+do $$
+declare v_prod uuid; v_f1 uuid; v_f2 uuid; v_mov uuid; v_origem numeric; v_destino numeric;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_f2 from filiais where codigo = 'F02';
+
+  -- Lançou na filial errada.
+  v_mov := fn_registrar_entrada(v_prod, v_f1, 'deposito', 40, 10.00, 'L-FILIAL', current_date + 90);
+  perform fn_corrigir_movimentacao(
+    v_mov, v_f2, 'deposito', 40, 'L-FILIAL', current_date + 90, 'Entrou na filial errada');
+
+  select coalesce(sum(quantidade), 0) into v_origem from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1 and lote = 'L-FILIAL';
+  select coalesce(sum(quantidade), 0) into v_destino from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f2 and lote = 'L-FILIAL';
+
+  if v_origem <> 0 or v_destino <> 40 then
+    raise exception 'FALHOU: corrigir a filial deveria deixar origem=0 e destino=40, veio origem=% destino=%',
+      v_origem, v_destino;
+  end if;
+  raise notice 'ok  corrigir a filial move o saldo da errada para a certa';
+end $$;
+
+do $$
+declare v_prod uuid; v_f1 uuid; v_mov uuid; v_errado numeric; v_certo numeric; v_validade date;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_mov := fn_registrar_entrada(v_prod, v_f1, 'deposito', 25, 10.00, 'L-ERRADO', current_date + 30);
+  perform fn_corrigir_movimentacao(
+    v_mov, v_f1, 'deposito', 25, 'L-CERTO', current_date + 45, 'Lote e validade trocados');
+
+  select coalesce(sum(quantidade), 0) into v_errado from lotes_estoque
+   where produto_id = v_prod and lote = 'L-ERRADO';
+  select coalesce(sum(quantidade), 0), max(data_validade) into v_certo, v_validade
+    from lotes_estoque where produto_id = v_prod and lote = 'L-CERTO';
+
+  if v_errado <> 0 or v_certo <> 25 then
+    raise exception 'FALHOU: corrigir lote deveria deixar errado=0 e certo=25, veio errado=% certo=%',
+      v_errado, v_certo;
+  end if;
+  if v_validade <> current_date + 45 then
+    raise exception 'FALHOU: a validade corrigida deveria ser %, veio %', current_date + 45, v_validade;
+  end if;
+  raise notice 'ok  corrigir lote e validade move o saldo para o lote certo';
+end $$;
+
+do $$
+declare
+  v_prod uuid; v_f1 uuid; v_lote_id uuid; v_mov uuid; v_res jsonb;
+  v_saldo numeric; v_custo numeric;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  perform fn_registrar_entrada(v_prod, v_f1, 'deposito', 50, 12.00, 'L-SAIDA', current_date + 120);
+  select id into v_lote_id from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1 and lote = 'L-SAIDA';
+
+  -- Lote explícito: sem isso o FEFO pegaria outro lote deste mesmo produto.
+  v_res := fn_registrar_saida(v_prod, v_f1, 'deposito', 20, 'venda', v_lote_id, 'saida de teste');
+  v_mov := (v_res->'movimentacoes'->>0)::uuid;
+
+  perform fn_estornar_movimentacao(v_mov, 'Saida lancada por engano');
+
+  select quantidade into v_saldo from lotes_estoque where id = v_lote_id;
+  select custo_unitario into v_custo from movimentacoes
+   where id = (select movimentacao_estorno_id from movimentacoes_correcoes where movimentacao_id = v_mov);
+
+  if v_saldo <> 50 then
+    raise exception 'FALHOU: estornar a saida deveria devolver o lote a 50, veio %', v_saldo;
+  end if;
+  if v_custo <> 12.00 then
+    raise exception 'FALHOU: o estorno deveria devolver ao custo original 12.00, veio %', v_custo;
+  end if;
+  raise notice 'ok  estornar uma saida devolve o saldo ao lote de origem com o custo original';
+end $$;
+
+do $$
+declare v_prod uuid; v_f1 uuid; v_lote_id uuid; v_mov uuid;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_mov := fn_registrar_entrada(v_prod, v_f1, 'deposito', 10, 10.00, 'L-CONSUMIDO', current_date + 200);
+  select id into v_lote_id from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f1 and lote = 'L-CONSUMIDO';
+  perform fn_registrar_saida(v_prod, v_f1, 'deposito', 10, 'venda', v_lote_id, 'consumiu tudo');
+
+  -- O saldo da entrada já saiu do estoque: estornar deixaria saldo negativo.
+  begin
+    perform fn_estornar_movimentacao(v_mov, 'tentando estornar sem saldo');
+    raise exception 'FALHOU: estorno sem saldo deveria ser bloqueado';
+  exception when check_violation then
+    raise notice 'ok  estorno de entrada ja consumida e bloqueado com mensagem clara';
+  end;
+end $$;
+
+-- Estes dois conferem a MENSAGEM, não só o errcode: sem a guarda certa, o
+-- estorno de uma transferência ainda estoura check_violation por outro motivo
+-- ("o lote não existe mais"), e o teste passaria sem testar nada.
+do $$
+declare v_mov uuid; v_erro text;
+begin
+  select id into v_mov from movimentacoes where tipo = 'transferencia' limit 1;
+  if v_mov is null then
+    raise exception 'FALHOU: nenhuma movimentacao de transferencia para testar';
+  end if;
+
+  begin
+    perform fn_estornar_movimentacao(v_mov, 'nao deveria passar');
+    v_erro := '<nenhum erro>';
+  exception when others then
+    v_erro := sqlerrm;
+  end;
+
+  if v_erro not like '%transfer%' then
+    raise exception 'FALHOU: transferencia deveria ser barrada pela guarda propria, veio: %', v_erro;
+  end if;
+  raise notice 'ok  movimentacao de transferencia e barrada pela guarda de transferencia';
+end $$;
+
+do $$
+declare v_mov uuid; v_erro text;
+begin
+  select id into v_mov from movimentacoes where inventario_id is not null limit 1;
+  if v_mov is null then
+    raise exception 'FALHOU: nenhuma movimentacao de inventario para testar';
+  end if;
+
+  begin
+    perform fn_estornar_movimentacao(v_mov, 'nao deveria passar');
+    v_erro := '<nenhum erro>';
+  exception when others then
+    v_erro := sqlerrm;
+  end;
+
+  if v_erro not like '%inventário%' then
+    raise exception 'FALHOU: ajuste de inventario deveria ser barrado pela guarda propria, veio: %', v_erro;
+  end if;
+  raise notice 'ok  movimentacao de ajuste de inventario e barrada pela guarda de inventario';
+end $$;
+
+do $$
+declare v_mov uuid;
+begin
+  -- A entrada do primeiro teste já foi corrigida uma vez.
+  select movimentacao_id into v_mov from movimentacoes_correcoes
+   where operacao = 'correcao' limit 1;
+
+  begin
+    perform fn_estornar_movimentacao(v_mov, 'segunda vez');
+    raise exception 'FALHOU: corrigir/estornar duas vezes deveria ser bloqueado';
+  exception when unique_violation then
+    raise notice 'ok  o mesmo lancamento nao pode ser corrigido duas vezes';
+  end;
+end $$;
+
+do $$
+declare v_prod uuid; v_f2 uuid; v_mov uuid; v_antes numeric; v_depois numeric; v_bloqueado boolean;
+begin
+  select id into v_prod from produtos where ean = '7891000900001';
+  select id into v_f2 from filiais where codigo = 'F02';
+
+  -- O relançamento do teste de filial ficou em F02, que é a filial do operador.
+  select movimentacao_nova_id into v_mov from movimentacoes_correcoes c
+    join movimentacoes m on m.id = c.movimentacao_nova_id
+   where m.filial_destino_id = v_f2 and m.lote = 'L-FILIAL' limit 1;
+
+  select coalesce(sum(quantidade), 0) into v_antes from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f2 and lote = 'L-FILIAL';
+
+  perform set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+
+  begin
+    perform fn_estornar_movimentacao(v_mov, 'operador tentando');
+    v_bloqueado := false;
+  exception when insufficient_privilege then
+    v_bloqueado := true;
+  end;
+
+  perform set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+  select coalesce(sum(quantidade), 0) into v_depois from lotes_estoque
+   where produto_id = v_prod and filial_id = v_f2 and lote = 'L-FILIAL';
+
+  if not v_bloqueado then
+    raise exception 'FALHOU: operador sem estoque.corrigir conseguiu estornar';
+  end if;
+  if v_antes <> v_depois then
+    raise exception 'FALHOU: o saldo mudou mesmo com o estorno bloqueado (% -> %)', v_antes, v_depois;
+  end if;
+  raise notice 'ok  operador sem estoque.corrigir nao estorna e o saldo nao muda';
+end $$;
+
+do $$
+declare v_original movimentacoes%rowtype; v_id uuid; v_total_correcoes bigint;
+begin
+  select movimentacao_id into v_id from movimentacoes_correcoes where operacao = 'correcao' limit 1;
+  select * into v_original from movimentacoes where id = v_id;
+
+  -- A correção nunca toca a linha errada: ela continua lá, com o valor errado.
+  if v_original.id is null then
+    raise exception 'FALHOU: a movimentacao original sumiu apos a correcao';
+  end if;
+  if v_original.quantidade <> 100 then
+    raise exception 'FALHOU: a movimentacao original foi alterada (quantidade=%), deveria seguir 100',
+      v_original.quantidade;
+  end if;
+
+  select count(*) into v_total_correcoes from movimentacoes
+   where produto_id = v_original.produto_id;
+  if v_total_correcoes < 3 then
+    raise exception 'FALHOU: a correcao deveria ter ACRESCENTADO lancamentos, ha so %', v_total_correcoes;
+  end if;
+
+  raise notice 'ok  a movimentacao original segue intacta e a correcao so acrescenta lancamentos';
+end $$;
+
+select assert_eq('authenticated executa fn_corrigir_movimentacao',
+  has_function_privilege('authenticated',
+    'fn_corrigir_movimentacao(uuid, uuid, tipo_local, numeric, text, date, text)', 'execute'), true);
+
+select assert_eq('anon nao executa fn_corrigir_movimentacao',
+  has_function_privilege('anon',
+    'fn_corrigir_movimentacao(uuid, uuid, tipo_local, numeric, text, date, text)', 'execute'), false);
+
+select assert_eq('anon nao executa fn_estornar_movimentacao',
+  has_function_privilege('anon', 'fn_estornar_movimentacao(uuid, text)', 'execute'), false);
+
+select assert_eq('helper interno do estorno nao e alcancavel por authenticated',
+  has_function_privilege('authenticated',
+    'fn_estornar_movimentacao_interno(movimentacoes)', 'execute'), false);
+
 -- ------------------------------------------------------- tarefas automáticas
 reset role;
 select fn_gerar_tarefas_automaticas() as resultado_cron;
