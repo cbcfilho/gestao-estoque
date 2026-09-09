@@ -276,6 +276,80 @@ export async function importarMovimentos(
   }
 }
 
+const esquemaCorrecao = z.object({
+  movimentacao_id: z.string().uuid(),
+  filial_id: z.string().uuid("Selecione a filial."),
+  local: locais,
+  quantidade: z.coerce.number().positive("A quantidade deve ser maior que zero."),
+  lote: z.string().trim().max(60).optional().or(z.literal("")),
+  data_validade: z.string().optional().or(z.literal("")),
+  justificativa: z.string().trim().min(3, "Explique o motivo da correção."),
+});
+
+const esquemaEstorno = z.object({
+  movimentacao_id: z.string().uuid(),
+  justificativa: z.string().trim().min(3, "Explique o motivo do estorno."),
+});
+
+/**
+ * Corrige um lançamento errado: o banco estorna o original e relança com os
+ * dados certos. A movimentação errada continua no histórico — ver a migration
+ * 0022 e a regra de imutabilidade no AGENTS.md.
+ */
+export async function corrigirMovimentacao(entrada: unknown): Promise<Resultado> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.estoqueCorrigir);
+
+    const dados = esquemaCorrecao.parse(entrada);
+    const supabase = await supabaseServidor();
+
+    const { error } = await supabase.rpc("fn_corrigir_movimentacao", {
+      p_movimentacao_id: dados.movimentacao_id,
+      p_filial_id: dados.filial_id,
+      p_local: dados.local,
+      p_quantidade: dados.quantidade,
+      p_lote: dados.lote || null,
+      p_data_validade: dados.data_validade || null,
+      p_justificativa: dados.justificativa,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    revalidatePath("/estoque");
+    revalidatePath("/estoque/movimentacoes");
+    revalidatePath("/painel");
+
+    return { ok: true, dados: undefined, mensagem: "Lançamento corrigido." };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+/** Estorna um lançamento sem relançar — o "excluir" da tela. */
+export async function estornarMovimentacao(entrada: unknown): Promise<Resultado> {
+  try {
+    await exigirPermissaoAction(PERMISSOES.estoqueCorrigir);
+
+    const dados = esquemaEstorno.parse(entrada);
+    const supabase = await supabaseServidor();
+
+    const { error } = await supabase.rpc("fn_estornar_movimentacao", {
+      p_movimentacao_id: dados.movimentacao_id,
+      p_justificativa: dados.justificativa,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    revalidatePath("/estoque");
+    revalidatePath("/estoque/movimentacoes");
+    revalidatePath("/painel");
+
+    return { ok: true, dados: undefined, mensagem: "Lançamento estornado." };
+  } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
 /** Histórico de importações da filial, para conferência. */
 export async function listarImportacoes(filialId: string): Promise<
   Resultado<

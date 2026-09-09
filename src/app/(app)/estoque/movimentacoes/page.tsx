@@ -1,6 +1,7 @@
 import { History } from "lucide-react";
 import type { Metadata } from "next";
 
+import { CorrigirMovimentacao } from "./correcao";
 import { FiltrosMovimentacoes } from "./filtros";
 import { Badge, type TomBadge } from "@/components/ui/badge";
 import { Cartao } from "@/components/ui/cartao";
@@ -14,7 +15,7 @@ import {
   Th,
   Tr,
 } from "@/components/ui/tabela";
-import { exigirPermissao } from "@/lib/auth";
+import { exigirPermissao, temPermissao } from "@/lib/auth";
 import { escopoDeFiliais } from "@/lib/filial";
 import {
   LABEL_LOCAL_CURTO,
@@ -38,6 +39,23 @@ const TOM_TIPO: Record<TipoMovimentacao, TomBadge> = {
 };
 
 const POR_PAGINA = 50;
+
+/**
+ * Selo do ciclo de correção. Uma correção deixa três linhas no histórico — a
+ * errada, o estorno e a certa — e sem marcação elas se confundem com
+ * lançamentos comuns.
+ */
+function SeloCorrecao({ m }: { m: VwMovimentacao }) {
+  if (m.estornada) {
+    return (
+      <Badge tom={m.corrigida ? "alerta" : "critico"}>
+        {m.corrigida ? "Corrigida" : "Estornada"}
+      </Badge>
+    );
+  }
+  if (m.correcao_de) return <Badge tom="info">Correção</Badge>;
+  return null;
+}
 
 function rotuloTrajeto(m: VwMovimentacao) {
   const origem = m.filial_origem_nome
@@ -88,6 +106,9 @@ export default async function PaginaMovimentacoes({
   const total = count ?? 0;
   const totalPaginas = Math.max(1, Math.ceil(total / POR_PAGINA));
 
+  const podeCorrigir = temPermissao(sessao, PERMISSOES.estoqueCorrigir);
+  const filiais = sessao.filiais.map((f) => ({ id: f.id, nome: f.nome }));
+
   return (
     <div className="flex flex-col gap-5">
       <CabecalhoPagina
@@ -118,17 +139,23 @@ export default async function PaginaMovimentacoes({
                     <Th alinhar="direita">Qtd.</Th>
                     <Th alinhar="direita">Valor</Th>
                     <Th>Responsável</Th>
+                    {podeCorrigir && <Th alinhar="direita">Ações</Th>}
                   </tr>
                 </thead>
                 <tbody>
                   {movimentacoes.map((m) => (
-                    <Tr key={m.id}>
+                    <Tr key={m.id} className={m.estornada ? "opacity-60" : undefined}>
                       <Td className="tabular whitespace-nowrap">{dataHora(m.data_hora)}</Td>
                       <Td>
                         <Badge tom={TOM_TIPO[m.tipo]}>{LABEL_TIPO_MOV[m.tipo]}</Badge>
                       </Td>
                       <Td>
-                        <span className="font-medium">{m.produto_nome}</span>
+                        <span className={m.estornada ? "font-medium line-through" : "font-medium"}>
+                          {m.produto_nome}
+                        </span>
+                        <span className="ml-2 inline-block align-middle">
+                          <SeloCorrecao m={m} />
+                        </span>
                         {m.lote && m.lote !== "UNICO" && (
                           <span className="block text-sm texto-suave">lote {m.lote}</span>
                         )}
@@ -138,6 +165,11 @@ export default async function PaginaMovimentacoes({
                       <Td alinhar="direita">{quantidade(m.quantidade, m.unidade)}</Td>
                       <Td alinhar="direita">{moeda(m.valor_total)}</Td>
                       <Td className="text-sm">{m.usuario_nome ?? "—"}</Td>
+                      {podeCorrigir && (
+                        <Td alinhar="direita">
+                          <CorrigirMovimentacao movimentacao={m} filiais={filiais} />
+                        </Td>
+                      )}
                     </Tr>
                   ))}
                 </tbody>
@@ -148,9 +180,18 @@ export default async function PaginaMovimentacoes({
               {movimentacoes.map((m) => (
                 <ItemCartao
                   key={m.id}
-                  titulo={m.produto_nome}
+                  titulo={
+                    <span className={m.estornada ? "line-through" : undefined}>
+                      {m.produto_nome}
+                    </span>
+                  }
                   subtitulo={rotuloTrajeto(m)}
-                  direita={<Badge tom={TOM_TIPO[m.tipo]}>{LABEL_TIPO_MOV[m.tipo]}</Badge>}
+                  direita={
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge tom={TOM_TIPO[m.tipo]}>{LABEL_TIPO_MOV[m.tipo]}</Badge>
+                      <SeloCorrecao m={m} />
+                    </div>
+                  }
                   linhas={[
                     { rotulo: "Quantidade", valor: quantidade(m.quantidade, m.unidade) },
                     { rotulo: "Valor", valor: moeda(m.valor_total) },
@@ -158,6 +199,11 @@ export default async function PaginaMovimentacoes({
                     { rotulo: "Quando", valor: dataHora(m.data_hora) },
                     { rotulo: "Quem", valor: m.usuario_nome ?? "—" },
                   ]}
+                  acoes={
+                    podeCorrigir ? (
+                      <CorrigirMovimentacao movimentacao={m} filiais={filiais} />
+                    ) : undefined
+                  }
                 />
               ))}
             </ListaCartoes>

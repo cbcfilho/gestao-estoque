@@ -27,7 +27,8 @@ export type MotivoMovimentacao =
   | "brinde"
   | "ajuste_negativo"
   | "envio_transferencia"
-  | "ajuste_inventario";
+  | "ajuste_inventario"
+  | "estorno";
 
 export type StatusTransferencia = "solicitada" | "em_transito" | "recebida" | "cancelada";
 export type TipoInventario = "geral" | "parcial";
@@ -530,6 +531,12 @@ export interface VwMovimentacao {
   inventario_id: string | null;
   anexo_url: string | null;
   observacao: string | null;
+  /** O lançamento foi estornado (corrigido ou excluído). Ver migration 0022. */
+  estornada: boolean;
+  /** Foi estornado E relançado com os dados certos, não só excluído. */
+  corrigida: boolean;
+  /** Quando esta linha é o estorno ou o relançamento, aponta para o original. */
+  correcao_de: string | null;
 }
 
 export interface VwTarefa extends Tarefa {
