@@ -612,6 +612,242 @@ select assert_eq('helper interno do estorno nao e alcancavel por authenticated',
   has_function_privilege('authenticated',
     'fn_estornar_movimentacao_interno(movimentacoes)', 'execute'), false);
 
+-- ------------------------------------ relatorio de movimentacoes (0023)
+-- Também antes do `reset role`: o caso de RLS abaixo só vale rodando como
+-- `authenticated` de verdade.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+-- Produto exclusivo desta seção, com sku e preço de venda próprios.
+do $$
+declare v_prod uuid;
+begin
+  insert into produtos (nome, ean, sku, valor_custo, valor_venda, estoque_minimo, controla_validade)
+  values ('Produto Teste Relatorio', '7891000900002', 'SKU-REL-01', 8.00, 19.99, 0, false)
+  returning id into v_prod;
+
+  insert into produto_filiais (produto_id, filial_id)
+  select v_prod, f.id from filiais f;
+end $$;
+
+do $$
+declare
+  v_prod uuid; v_f1 uuid; v_mov uuid;
+  v_sku text; v_venda numeric; v_total numeric;
+begin
+  select id into v_prod from produtos where ean = '7891000900002';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_mov := fn_registrar_entrada(v_prod, v_f1, 'deposito', 3.333, 8.00, 'L-REL', null);
+
+  select sku, valor_venda_unitario, valor_venda_total
+    into v_sku, v_venda, v_total
+    from vw_movimentacoes where id = v_mov;
+
+  if v_sku is distinct from 'SKU-REL-01' then
+    raise exception 'FALHOU: a view deveria devolver o sku SKU-REL-01, veio %', v_sku;
+  end if;
+  if v_venda is distinct from 19.99 then
+    raise exception 'FALHOU: valor_venda_unitario deveria ser 19.99, veio %', v_venda;
+  end if;
+  raise notice 'ok  a view devolve sku e valor de venda do produto';
+
+  -- 3.333 x 19.99 = 66.62667, que arredondado vira 66.63.
+  if v_total is distinct from 66.63 then
+    raise exception 'FALHOU: valor_venda_total deveria ser 66.63, veio %', v_total;
+  end if;
+  raise notice 'ok  valor_venda_total = quantidade x preco de venda, arredondado (=66.63)';
+
+  if (select importacao_arquivo from vw_movimentacoes where id = v_mov) is not null then
+    raise exception 'FALHOU: lancamento manual nao deveria ter importacao_arquivo preenchido';
+  end if;
+  raise notice 'ok  lancamento manual tem importacao_arquivo nulo';
+end $$;
+
+do $$
+declare v_f1 uuid; v_prod uuid; v_arquivo text;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_prod from produtos where ean = '7891000900002';
+
+  perform fn_importar_movimentos(v_f1, 'planilha-relatorio.xlsx', 'hash-teste-relatorio',
+    jsonb_build_array(
+      jsonb_build_object('tipo','entrada','ean','7891000900002','local','deposito',
+                         'quantidade',5,'documento','NF-REL','data','2026-08-20',
+                         'custo_unitario','8.00','lote','L-IMP')));
+
+  select importacao_arquivo into v_arquivo
+    from vw_movimentacoes where produto_id = v_prod and lote = 'L-IMP';
+
+  if v_arquivo is distinct from 'planilha-relatorio.xlsx' then
+    raise exception 'FALHOU: importacao_arquivo deveria ser planilha-relatorio.xlsx, veio %', v_arquivo;
+  end if;
+  raise notice 'ok  movimento importado traz o nome do arquivo em importacao_arquivo';
+end $$;
+
+-- A observação do estorno começa com 'Estorno do lançamento'. Uma extração
+-- ingênua (um like '%Importacao%' da vida) marcaria linha que não é importação.
+do $$
+declare v_prod uuid; v_mov uuid; v_estorno uuid; v_arquivo text;
+begin
+  select id into v_prod from produtos where ean = '7891000900002';
+  select id into v_mov from movimentacoes where produto_id = v_prod and lote = 'L-REL';
+
+  perform fn_estornar_movimentacao(v_mov, 'Teste da extracao do nome de arquivo');
+
+  select movimentacao_estorno_id into v_estorno
+    from movimentacoes_correcoes where movimentacao_id = v_mov;
+
+  select importacao_arquivo into v_arquivo from vw_movimentacoes where id = v_estorno;
+
+  if v_arquivo is not null then
+    raise exception 'FALHOU: estorno nao e importacao, mas veio importacao_arquivo=%', v_arquivo;
+  end if;
+  raise notice 'ok  estorno nao e confundido com importacao (importacao_arquivo nulo)';
+end $$;
+
+do $$
+declare v_prod uuid; v_visiveis bigint;
+begin
+  select id into v_prod from produtos where ean = '7891000900002';
+
+  -- Todo lançamento deste produto está em F01; o operador é de F02.
+  perform set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+  select count(*) into v_visiveis from vw_movimentacoes where produto_id = v_prod;
+  perform set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+  if v_visiveis <> 0 then
+    raise exception 'FALHOU: operador de outra filial enxergou % movimentacoes pela view', v_visiveis;
+  end if;
+  raise notice 'ok  a view estendida continua respeitando a RLS por filial';
+end $$;
+
+-- A função do relatório: página, contagem e totais do mesmo filtro.
+do $$
+declare
+  v_prod uuid; v_f1 uuid; v_r jsonb;
+  v_total bigint; v_soma_direta numeric;
+begin
+  select id into v_prod from produtos where ean = '7891000900002';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_r := fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1, p_filial_id => v_f1);
+
+  -- O produto tem 3 lançamentos em F01: a entrada manual, o estorno dela e a
+  -- entrada importada. O filtro é por filial, então o total é maior — o que
+  -- interessa é o total bater com a contagem direta sobre o mesmo filtro.
+  v_total := (v_r->>'total')::bigint;
+
+  if v_total < 3 then
+    raise exception 'FALHOU: o relatorio deveria achar ao menos os 3 lancamentos, veio %', v_total;
+  end if;
+
+  -- Totais são do conjunto inteiro, não da página: com limite 1 eles não mudam.
+  if (fn_relatorio_movimentacoes(
+        p_de => current_date - 400, p_ate => current_date + 1,
+        p_filial_id => v_f1, p_limite => 1)->'totais'->>'custo')::numeric
+     is distinct from (v_r->'totais'->>'custo')::numeric then
+    raise exception 'FALHOU: os totais mudaram ao paginar — deveriam ser do conjunto filtrado inteiro';
+  end if;
+
+  if jsonb_array_length(fn_relatorio_movimentacoes(
+       p_de => current_date - 400, p_ate => current_date + 1,
+       p_filial_id => v_f1, p_limite => 1)->'linhas') <> 1 then
+    raise exception 'FALHOU: p_limite nao limitou a pagina';
+  end if;
+  raise notice 'ok  relatorio pagina as linhas mas mantem os totais do conjunto filtrado';
+
+  -- Os totais batem com a soma direta sobre o mesmo recorte.
+  select coalesce(sum(valor_total), 0) into v_soma_direta
+    from vw_movimentacoes
+   where (filial_origem_id = v_f1 or filial_destino_id = v_f1)
+     and data_hora >= (current_date - 400)::timestamptz
+     and data_hora <  (current_date + 2)::timestamptz;
+
+  if (v_r->'totais'->>'custo')::numeric is distinct from v_soma_direta then
+    raise exception 'FALHOU: total de custo do relatorio (%) nao bate com a soma direta (%)',
+      (v_r->'totais'->>'custo')::numeric, v_soma_direta;
+  end if;
+  raise notice 'ok  os totais do relatorio batem com a soma direta do mesmo recorte';
+end $$;
+
+do $$
+declare v_prod uuid; v_f1 uuid; v_importadas jsonb; v_manuais jsonb;
+begin
+  select id into v_prod from produtos where ean = '7891000900002';
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_importadas := fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1,
+    p_filial_id => v_f1, p_busca => 'Produto Teste Relatorio', p_origem => 'importadas');
+
+  v_manuais := fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1,
+    p_filial_id => v_f1, p_busca => 'Produto Teste Relatorio', p_origem => 'manuais');
+
+  -- Uma linha importada; a entrada manual e o estorno dela não são importação.
+  if (v_importadas->>'total')::bigint <> 1 then
+    raise exception 'FALHOU: origem=importadas deveria trazer 1 linha, veio %',
+      (v_importadas->>'total')::bigint;
+  end if;
+  if (v_manuais->>'total')::bigint <> 2 then
+    raise exception 'FALHOU: origem=manuais deveria trazer 2 linhas, veio %',
+      (v_manuais->>'total')::bigint;
+  end if;
+  raise notice 'ok  filtro de origem separa importadas de manuais';
+end $$;
+
+do $$
+declare v_f1 uuid; v_com jsonb; v_sem jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_com := fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1,
+    p_filial_id => v_f1, p_busca => 'Produto Teste Relatorio');
+
+  v_sem := fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1,
+    p_filial_id => v_f1, p_busca => 'Produto Teste Relatorio', p_sem_estornos => true);
+
+  -- Some o par: a entrada estornada e o estorno dela. Sobra a importada.
+  if (v_com->>'total')::bigint <> 3 then
+    raise exception 'FALHOU: com estornos esperava 3 linhas, veio %', (v_com->>'total')::bigint;
+  end if;
+  if (v_sem->>'total')::bigint <> 1 then
+    raise exception 'FALHOU: sem estornos esperava 1 linha, veio %', (v_sem->>'total')::bigint;
+  end if;
+  raise notice 'ok  "sem estornos" tira a linha estornada e o estorno, e mantem o resto';
+end $$;
+
+do $$
+declare v_f1 uuid; v_total bigint;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  -- A função é security invoker: a RLS decide o que o operador enxerga.
+  perform set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+  v_total := (fn_relatorio_movimentacoes(
+    p_de => current_date - 400, p_ate => current_date + 1,
+    p_busca => 'Produto Teste Relatorio')->>'total')::bigint;
+  perform set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+  if v_total <> 0 then
+    raise exception 'FALHOU: operador de outra filial viu % linhas no relatorio', v_total;
+  end if;
+  raise notice 'ok  o relatorio respeita a RLS por filial (operador nao ve outra filial)';
+end $$;
+
+select assert_eq('authenticated executa fn_relatorio_movimentacoes',
+  has_function_privilege('authenticated',
+    'fn_relatorio_movimentacoes(date, date, text, uuid, text, text, text, boolean, integer, integer)',
+    'execute'), true);
+
+select assert_eq('anon nao executa fn_relatorio_movimentacoes',
+  has_function_privilege('anon',
+    'fn_relatorio_movimentacoes(date, date, text, uuid, text, text, text, boolean, integer, integer)',
+    'execute'), false);
+
 -- ------------------------------------------------------- tarefas automáticas
 reset role;
 select fn_gerar_tarefas_automaticas() as resultado_cron;

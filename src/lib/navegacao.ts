@@ -103,6 +103,14 @@ export const NAVEGACAO: ItemNavegacao[] = [
     href: "/relatorios",
     icone: "relatorios",
     permissoes: [PERMISSOES.relatoriosExportar, PERMISSOES.dashboardConsolidado],
+    subitens: [
+      { rotulo: "Visão geral", href: "/relatorios" },
+      {
+        rotulo: "Movimentações",
+        href: "/relatorios/movimentacoes",
+        permissoes: [PERMISSOES.estoqueVisualizar],
+      },
+    ],
   },
   {
     rotulo: "Ponto",

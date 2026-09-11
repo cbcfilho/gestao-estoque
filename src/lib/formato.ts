@@ -84,6 +84,14 @@ export function dataHora(valor: string | Date | null | undefined) {
     : "—";
 }
 
+/** Só o horário — o relatório de movimentações separa data e hora em colunas. */
+export function hora(valor: string | Date | null | undefined) {
+  const dt = paraData(valor);
+  return dt
+    ? dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : "—";
+}
+
 export function mesAno(valor: string | Date | null | undefined) {
   const dt = paraData(valor);
   return dt

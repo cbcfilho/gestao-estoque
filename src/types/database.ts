@@ -537,6 +537,12 @@ export interface VwMovimentacao {
   corrigida: boolean;
   /** Quando esta linha é o estorno ou o relançamento, aponta para o original. */
   correcao_de: string | null;
+  sku: string | null;
+  /** Preço de venda ATUAL do produto — o sistema não guarda histórico de preço. */
+  valor_venda_unitario: number;
+  valor_venda_total: number;
+  /** Nome do arquivo quando a linha veio de importação de planilha. Ver 0023. */
+  importacao_arquivo: string | null;
 }
 
 export interface VwTarefa extends Tarefa {
