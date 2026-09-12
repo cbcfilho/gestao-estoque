@@ -45,7 +45,7 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 101 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 114 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
 da lista de contagem do inventário, ajuste de inventário, RLS por filial,
@@ -61,8 +61,13 @@ quantidade, filial e lote/validade acerta o saldo; estorno de saída devolve ao
 lote com o custo original; estorno de entrada já consumida é barrado;
 transferência e ajuste de inventário são barrados pela guarda própria — o teste
 confere a mensagem, não só o código de erro; correção dupla bloqueada; operador
-sem `estoque.corrigir` não estorna; a movimentação original segue intacta). Se
-você mexeu no SQL e não rodou isso, não sabe se quebrou nada.
+sem `estoque.corrigir` não estorna; a movimentação original segue intacta) e o
+relatório de movimentações (sku e preço de venda na view; o nome do arquivo de
+importação extraído da observação, sem confundir estorno com importação; totais
+do conjunto filtrado inteiro, que não mudam ao paginar; filtro de origem; o
+"sem estornos" tirando os dois lados do par; e a RLS por filial valendo pela
+função, que é security invoker de propósito). Se você mexeu no SQL e não rodou
+isso, não sabe se quebrou nada.
 
 Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
 tudo roda como `postgres` — que é superusuário e **ignora checagem de
