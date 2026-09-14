@@ -46,6 +46,11 @@ export const NAVEGACAO: ItemNavegacao[] = [
     subitens: [
       { rotulo: "Saldos", href: "/estoque" },
       { rotulo: "Entrada", href: "/estoque/entrada", permissoes: [PERMISSOES.estoqueEntrada] },
+      {
+        rotulo: "Receber NF-e",
+        href: "/estoque/entrada/nfe",
+        permissoes: [PERMISSOES.estoqueReceberNfe],
+      },
       { rotulo: "Saída", href: "/estoque/saida", permissoes: [PERMISSOES.estoqueSaida] },
       { rotulo: "Ajuste", href: "/estoque/ajuste", permissoes: [PERMISSOES.estoqueAjustar] },
       { rotulo: "Movimentações", href: "/estoque/movimentacoes" },

@@ -314,6 +314,531 @@ select assert_eq('dashboard responde', (
 select assert_eq('curva ABC classifica', (
   select count(*) > 0 from fn_curva_abc(current_date - 30, current_date)), true);
 
+-- ============================================================================
+-- Recebimento de produto via XML de NF-e (migration 0024)
+--
+-- O XML já vem interpretado do cliente: as funções recebem jsonb pronto, não
+-- texto de XML. Continua como admin (uid já setado acima), exceto no bloco 8,
+-- que testa a autossuficiência da permissão com o perfil operador.
+-- ============================================================================
+
+-- 1) Happy path: nota com 2 itens — 1 casa por EAN, 1 é produto novo
+do $$
+declare
+  v_f1 uuid; v_prod uuid; v_receb jsonb; v_receb_id uuid; v_itens jsonb;
+  v_item_casado uuid; v_item_novo uuid;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_prod from produtos where ean = '7891000100103';
+
+  v_itens := jsonb_build_array(
+    jsonb_build_object(
+      'codigoProdutoNota', 'FORN-001', 'eanNota', '7891000100103',
+      'descricaoNota', 'Trufa Ao Leite 20g', 'unidadeNota', 'UN',
+      'quantidadeNota', 50, 'valorUnitarioNota', 4.10, 'valorTotalNota', 205.00,
+      'loteSugerido', 'NFE-001', 'dataFabricacaoSugerida', null,
+      'dataValidadeSugerida', (current_date + 90)::text
+    ),
+    jsonb_build_object(
+      'codigoProdutoNota', 'FORN-777', 'eanNota', '7891000777777',
+      'descricaoNota', 'Bombom Sortido 100g', 'unidadeNota', 'CX',
+      'quantidadeNota', 10, 'valorUnitarioNota', 22.50, 'valorTotalNota', 225.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null
+    )
+  );
+
+  v_receb := fn_iniciar_recebimento_nfe(
+    v_f1, 'deposito', repeat('1', 44)::char(44), '1001', '1',
+    now(), '11222333000181', 'Fornecedor Teste Ltda', 430.00, '<xml>teste</xml>', v_itens
+  );
+
+  if (v_receb->>'retomado')::boolean is distinct from false then
+    raise exception 'FALHOU: primeira importacao nao deveria vir marcada como retomada';
+  end if;
+
+  v_receb_id := (v_receb->>'id')::uuid;
+  perform set_config('teste.receb1', v_receb_id::text, false);
+
+  select id into v_item_casado from recebimento_nfe_itens
+   where recebimento_id = v_receb_id and codigo_produto_nota = 'FORN-001';
+  select id into v_item_novo from recebimento_nfe_itens
+   where recebimento_id = v_receb_id and codigo_produto_nota = 'FORN-777';
+
+  perform set_config('teste.item_casado1', v_item_casado::text, false);
+  perform set_config('teste.item_novo1', v_item_novo::text, false);
+end $$;
+
+-- 3) Casamento por EAN: casado já vem com produto_id logo após iniciar; o novo, não.
+select assert_eq('item com EAN conhecido casa com o produto logo ao iniciar', (
+  select produto_id from recebimento_nfe_itens
+   where id = current_setting('teste.item_casado1')::uuid),
+  (select id from produtos where ean = '7891000100103'));
+
+select assert_eq('item com EAN desconhecido nao casa com nenhum produto', (
+  select produto_id from recebimento_nfe_itens
+   where id = current_setting('teste.item_novo1')::uuid),
+  null::uuid);
+
+do $$
+declare v_item_novo uuid; v_produto_novo uuid;
+begin
+  v_item_novo := current_setting('teste.item_novo1')::uuid;
+
+  perform fn_atualizar_item_recebimento_nfe(
+    current_setting('teste.item_casado1')::uuid,
+    (select produto_id from recebimento_nfe_itens where id = current_setting('teste.item_casado1')::uuid),
+    'NFE-001', current_date + 90, 50, null
+  );
+
+  -- Cadastra o produto novo já com o SKU e o EAN vindos da nota.
+  v_produto_novo := fn_cadastrar_produto_recebimento_nfe(
+    v_item_novo, 'Bombom Sortido 100g', '7891000777777', 'FORN-777',
+    null, null, 'cx', 22.50, 45.00, 5, null, true, false
+  );
+
+  perform fn_atualizar_item_recebimento_nfe(
+    v_item_novo, v_produto_novo, 'NFE-777', current_date + 60, 10, null
+  );
+end $$;
+
+select assert_eq('produto novo cadastrado com EAN e SKU vindos da nota', (
+  select ean || '|' || sku from produtos where nome = 'Bombom Sortido 100g'),
+  '7891000777777|FORN-777');
+
+do $$
+declare v_resultado jsonb;
+begin
+  v_resultado := fn_confirmar_recebimento_nfe(current_setting('teste.receb1')::uuid);
+  if (v_resultado->>'itens_creditados')::int <> 2 then
+    raise exception 'FALHOU: esperava 2 itens creditados, veio %', v_resultado->>'itens_creditados';
+  end if;
+end $$;
+
+select assert_eq('estoque creditado para o item casado', (
+  select quantidade from lotes_estoque
+   where produto_id = (select id from produtos where ean = '7891000100103')
+     and lote = 'NFE-001'), 50::numeric);
+
+select assert_eq('estoque creditado para o produto novo', (
+  select quantidade from lotes_estoque
+   where produto_id = (select id from produtos where nome = 'Bombom Sortido 100g')
+     and lote = 'NFE-777'), 10::numeric);
+
+select assert_eq('recebimento marcado como concluido', (
+  select status::text from recebimentos_nfe where id = current_setting('teste.receb1')::uuid),
+  'concluido');
+
+select assert_eq('movimentacao_id preenchido nos itens confirmados', (
+  select count(*) from recebimento_nfe_itens
+   where recebimento_id = current_setting('teste.receb1')::uuid and movimentacao_id is not null),
+  2::bigint);
+
+-- 2) Dedup: chave concluida bloqueia; em_conferencia retoma o mesmo id; cancelado libera
+do $$
+declare v_barrado boolean;
+begin
+  begin
+    perform fn_iniciar_recebimento_nfe(
+      (select id from filiais where codigo = 'F01'), 'deposito', repeat('1', 44)::char(44),
+      '1001', '1', now(), '11222333000181', 'Fornecedor Teste Ltda', 430.00, '<xml/>',
+      jsonb_build_array(jsonb_build_object(
+        'codigoProdutoNota', 'X', 'eanNota', null, 'descricaoNota', 'X', 'unidadeNota', 'UN',
+        'quantidadeNota', 1, 'valorUnitarioNota', 1, 'valorTotalNota', 1,
+        'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null))
+    );
+    v_barrado := false;
+  exception when unique_violation then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: reimportar nota ja concluida deveria falhar';
+  end if;
+  raise notice 'ok  reimportar chave ja concluida foi bloqueada';
+end $$;
+
+do $$
+declare
+  v_f1 uuid; v_receb1 jsonb; v_receb2 jsonb; v_id1 uuid; v_id2 uuid; v_itens jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  v_itens := jsonb_build_array(jsonb_build_object(
+    'codigoProdutoNota', 'Y', 'eanNota', null, 'descricaoNota', 'Item Y', 'unidadeNota', 'UN',
+    'quantidadeNota', 1, 'valorUnitarioNota', 1, 'valorTotalNota', 1,
+    'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null));
+
+  v_receb1 := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('2', 44)::char(44),
+    '1002', '1', now(), null, null, 0, '<xml/>', v_itens);
+  v_id1 := (v_receb1->>'id')::uuid;
+
+  -- Reimporta a mesma chave, ainda em conferencia: deve retomar o mesmo id.
+  v_receb2 := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('2', 44)::char(44),
+    '1002', '1', now(), null, null, 0, '<xml/>', v_itens);
+  v_id2 := (v_receb2->>'id')::uuid;
+
+  if v_id1 <> v_id2 then
+    raise exception 'FALHOU: retomada deveria devolver o mesmo id (% <> %)', v_id1, v_id2;
+  end if;
+  if (v_receb2->>'retomado')::boolean is distinct from true then
+    raise exception 'FALHOU: segunda importacao deveria vir marcada como retomada';
+  end if;
+  if (select count(*) from recebimento_nfe_itens where recebimento_id = v_id1) <> 1 then
+    raise exception 'FALHOU: retomada duplicou itens';
+  end if;
+  raise notice 'ok  retomada de rascunho em_conferencia devolve o mesmo id, sem duplicar itens';
+
+  perform fn_cancelar_recebimento_nfe(v_id1, 'teste de dedup');
+
+  -- Cancelado libera a chave: reimportar cria uma linha nova.
+  v_receb2 := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('2', 44)::char(44),
+    '1002', '1', now(), null, null, 0, '<xml/>', v_itens);
+  v_id2 := (v_receb2->>'id')::uuid;
+
+  if v_id1 = v_id2 then
+    raise exception 'FALHOU: apos cancelar, reimportar deveria criar uma linha nova';
+  end if;
+  raise notice 'ok  cancelar libera a chave para reimportar do zero';
+end $$;
+
+-- 4) Divergencia de quantidade: recebido menor e recebido maior que a nota
+do $$
+declare
+  v_f1 uuid; v_receb jsonb; v_receb_id uuid; v_item_a uuid; v_item_b uuid; v_itens jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  v_itens := jsonb_build_array(
+    jsonb_build_object('codigoProdutoNota', 'A', 'eanNota', '7891000100103',
+      'descricaoNota', 'Trufa Ao Leite 20g', 'unidadeNota', 'UN',
+      'quantidadeNota', 30, 'valorUnitarioNota', 4.00, 'valorTotalNota', 120.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null,
+      'dataValidadeSugerida', (current_date + 90)::text),
+    jsonb_build_object('codigoProdutoNota', 'B', 'eanNota', '7891000315507',
+      'descricaoNota', 'Leite Integral 1L', 'unidadeNota', 'L',
+      'quantidadeNota', 12, 'valorUnitarioNota', 4.50, 'valorTotalNota', 54.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null)
+  );
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('4', 44)::char(44),
+    '1004', '1', now(), null, null, 174.00, '<xml/>', v_itens);
+  v_receb_id := (v_receb->>'id')::uuid;
+
+  select id into v_item_a from recebimento_nfe_itens
+   where recebimento_id = v_receb_id and codigo_produto_nota = 'A';
+  select id into v_item_b from recebimento_nfe_itens
+   where recebimento_id = v_receb_id and codigo_produto_nota = 'B';
+
+  -- Recebido MENOR que a nota (30 -> 25).
+  perform fn_atualizar_item_recebimento_nfe(v_item_a,
+    (select produto_id from recebimento_nfe_itens where id = v_item_a),
+    'NFE-DIVA', current_date + 90, 25, null);
+  -- Recebido MAIOR que a nota (12 -> 15); Leite não controla validade.
+  perform fn_atualizar_item_recebimento_nfe(v_item_b,
+    (select produto_id from recebimento_nfe_itens where id = v_item_b),
+    null, null, 15, null);
+
+  perform set_config('teste.receb_div', v_receb_id::text, false);
+  perform set_config('teste.item_div_a', v_item_a::text, false);
+  perform set_config('teste.item_div_b', v_item_b::text, false);
+end $$;
+
+select assert_eq('divergencia negativa calculada', (
+  select divergencia_quantidade from recebimento_nfe_itens
+   where id = current_setting('teste.item_div_a')::uuid), (-5)::numeric);
+
+select assert_eq('divergencia positiva calculada', (
+  select divergencia_quantidade from recebimento_nfe_itens
+   where id = current_setting('teste.item_div_b')::uuid), 3::numeric);
+
+do $$
+declare v_resultado jsonb;
+begin
+  v_resultado := fn_confirmar_recebimento_nfe(current_setting('teste.receb_div')::uuid);
+  if (v_resultado->>'itens_creditados')::int <> 2 then
+    raise exception 'FALHOU: esperava 2 itens creditados na divergencia, veio %', v_resultado->>'itens_creditados';
+  end if;
+end $$;
+
+select assert_eq('divergencia: credita so o recebido (menor que a nota)', (
+  select quantidade from lotes_estoque
+   where produto_id = (select id from produtos where ean = '7891000100103')
+     and lote = 'NFE-DIVA'), 25::numeric);
+
+select assert_eq('divergencia: credita so o recebido (maior que a nota)', (
+  select quantidade from lotes_estoque
+   where produto_id = (select id from produtos where ean = '7891000315507')
+     and local = 'deposito' and lote = 'UNICO'), 15::numeric);
+
+-- 5) controla_validade sem validade preenchida bloqueia a confirmacao
+do $$
+declare v_f1 uuid; v_prod uuid; v_receb jsonb; v_item uuid; v_barrado boolean;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_prod from produtos where ean = '7891000100103';
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('5', 44)::char(44),
+    '1005', '1', now(), null, null, 40.00, '<xml/>',
+    jsonb_build_array(jsonb_build_object(
+      'codigoProdutoNota', 'V1', 'eanNota', '7891000100103', 'descricaoNota', 'Trufa Ao Leite 20g',
+      'unidadeNota', 'UN', 'quantidadeNota', 10, 'valorUnitarioNota', 4.00, 'valorTotalNota', 40.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null)));
+
+  select id into v_item from recebimento_nfe_itens
+   where recebimento_id = (v_receb->>'id')::uuid;
+
+  -- Conferido, mas sem data de validade — produto controla validade.
+  perform fn_atualizar_item_recebimento_nfe(v_item, v_prod, 'NFE-SEMVAL', null, 10, null);
+
+  begin
+    perform fn_confirmar_recebimento_nfe((v_receb->>'id')::uuid);
+    v_barrado := false;
+  exception when check_violation then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: confirmar sem validade deveria ser bloqueado (produto controla validade)';
+  end if;
+  raise notice 'ok  confirmacao bloqueada por falta de validade em produto que controla validade';
+end $$;
+
+-- 6) Item nao conferido bloqueia a confirmacao
+do $$
+declare v_f1 uuid; v_receb jsonb; v_barrado boolean;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('6', 44)::char(44),
+    '1006', '1', now(), null, null, 54.00, '<xml/>',
+    jsonb_build_array(jsonb_build_object(
+      'codigoProdutoNota', 'V2', 'eanNota', '7891000315507', 'descricaoNota', 'Leite Integral 1L',
+      'unidadeNota', 'L', 'quantidadeNota', 12, 'valorUnitarioNota', 4.50, 'valorTotalNota', 54.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null)));
+
+  -- Casa por EAN automaticamente, mas ninguem chamou fn_atualizar_item_recebimento_nfe:
+  -- continua "nao conferido".
+  begin
+    perform fn_confirmar_recebimento_nfe((v_receb->>'id')::uuid);
+    v_barrado := false;
+  exception when check_violation then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: confirmar com item nao conferido deveria ser bloqueado';
+  end if;
+  raise notice 'ok  confirmacao bloqueada por item ainda nao conferido';
+end $$;
+
+-- 7) Item sem produto vinculado bloqueia a confirmacao
+do $$
+declare v_f1 uuid; v_receb jsonb; v_barrado boolean;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('7', 44)::char(44),
+    '1007', '1', now(), null, null, 5.00, '<xml/>',
+    jsonb_build_array(jsonb_build_object(
+      'codigoProdutoNota', 'V3', 'eanNota', '7891000000001', 'descricaoNota', 'Produto Nao Cadastrado',
+      'unidadeNota', 'UN', 'quantidadeNota', 5, 'valorUnitarioNota', 1.00, 'valorTotalNota', 5.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null)));
+
+  -- EAN desconhecido: produto_id continua null, sem cadastro.
+  begin
+    perform fn_confirmar_recebimento_nfe((v_receb->>'id')::uuid);
+    v_barrado := false;
+  exception when check_violation then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: confirmar com item sem produto vinculado deveria ser bloqueado';
+  end if;
+  raise notice 'ok  confirmacao bloqueada por item sem produto vinculado';
+end $$;
+
+-- 8) Permissao: estoque.receber_nfe e autossuficiente (nao precisa de produtos.gerenciar)
+select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+
+select assert_eq('operador tem estoque.receber_nfe por padrao',
+  auth_tem_permissao('estoque.receber_nfe'), true);
+select assert_eq('operador nao tem produtos.gerenciar',
+  auth_tem_permissao('produtos.gerenciar'), false);
+
+do $$
+declare v_f2 uuid; v_receb jsonb; v_item uuid; v_produto_novo uuid;
+begin
+  select id into v_f2 from filiais where codigo = 'F02';
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f2, 'deposito', repeat('D', 44)::char(44),
+    '4001', '1', now(), null, null, 6.00, '<xml/>',
+    jsonb_build_array(jsonb_build_object(
+      'codigoProdutoNota', 'OP1', 'eanNota', '7891000999999', 'descricaoNota', 'Produto Novo Operador',
+      'unidadeNota', 'UN', 'quantidadeNota', 3, 'valorUnitarioNota', 2.00, 'valorTotalNota', 6.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null)));
+
+  select id into v_item from recebimento_nfe_itens
+   where recebimento_id = (v_receb->>'id')::uuid;
+
+  -- Cadastro inline sem produtos.gerenciar: prova a autossuficiencia da permissao.
+  v_produto_novo := fn_cadastrar_produto_recebimento_nfe(
+    v_item, 'Produto Novo Operador', '7891000999999', 'OP1',
+    null, null, 'un', 2.00, 4.00, 0, null, false, false
+  );
+
+  if v_produto_novo is null then
+    raise exception 'FALHOU: operador deveria conseguir cadastrar produto so com estoque.receber_nfe';
+  end if;
+  raise notice 'ok  operador cadastra produto na conferencia sem ter produtos.gerenciar';
+end $$;
+
+-- Mexer em perfil_permissoes exige perfis.gerenciar (RLS): faz como admin,
+-- não como o próprio operador sendo despojado da permissão.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+begin
+  delete from perfil_permissoes
+   where perfil_id = (select id from perfis where chave = 'operador')
+     and permissao_chave = 'estoque.receber_nfe';
+
+  if found then
+    raise notice 'estoque.receber_nfe removida do operador para o teste de bloqueio';
+  else
+    raise exception 'FALHOU: nada foi removido — o teste de bloqueio nao provaria nada';
+  end if;
+end $$;
+
+select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
+
+do $$
+declare v_barrado boolean;
+begin
+  begin
+    perform fn_iniciar_recebimento_nfe(
+      (select id from filiais where codigo = 'F02'), 'deposito', repeat('E', 44)::char(44),
+      '4002', '1', now(), null, null, 1, '<xml/>',
+      jsonb_build_array(jsonb_build_object(
+        'codigoProdutoNota', 'X', 'eanNota', null, 'descricaoNota', 'X', 'unidadeNota', 'UN',
+        'quantidadeNota', 1, 'valorUnitarioNota', 1, 'valorTotalNota', 1,
+        'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null))
+    );
+    v_barrado := false;
+  exception when insufficient_privilege then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: sem estoque.receber_nfe, fn_iniciar_recebimento_nfe deveria ser bloqueada';
+  end if;
+
+  raise notice 'ok  sem estoque.receber_nfe, nenhuma das funcoes novas funciona';
+end $$;
+
+-- Restaura a permissao padrao do perfil, novamente como admin.
+select set_config('teste.uid', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+begin
+  insert into perfil_permissoes (perfil_id, permissao_chave)
+  select id, 'estoque.receber_nfe' from perfis where chave = 'operador';
+end $$;
+
+select assert_eq('estoque.receber_nfe restaurada no perfil operador', (
+  select count(*) from perfil_permissoes
+   where perfil_id = (select id from perfis where chave = 'operador')
+     and permissao_chave = 'estoque.receber_nfe'), 1::bigint);
+
+-- 9) Fornecedor novo por CNPJ; segunda nota do mesmo CNPJ reaproveita
+do $$
+declare v_f1 uuid; v_receb1 jsonb; v_receb2 jsonb; v_forn1 uuid; v_forn2 uuid; v_itens jsonb;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  v_itens := jsonb_build_array(jsonb_build_object(
+    'codigoProdutoNota', 'F1', 'eanNota', null, 'descricaoNota', 'Item Fornecedor', 'unidadeNota', 'UN',
+    'quantidadeNota', 1, 'valorUnitarioNota', 1, 'valorTotalNota', 1,
+    'loteSugerido', null, 'dataFabricacaoSugerida', null, 'dataValidadeSugerida', null));
+
+  v_receb1 := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('8', 44)::char(44),
+    '2001', '1', now(), '22.333.444/0001-99', 'Distribuidora Nova Ltda', 1, '<xml/>', v_itens);
+
+  select fornecedor_id into v_forn1 from recebimentos_nfe where id = (v_receb1->>'id')::uuid;
+  if v_forn1 is null then
+    raise exception 'FALHOU: fornecedor deveria ter sido criado automaticamente';
+  end if;
+  if (select cnpj from fornecedores where id = v_forn1) <> '22333444000199' then
+    raise exception 'FALHOU: CNPJ deveria estar normalizado (so digitos)';
+  end if;
+
+  v_receb2 := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('9', 44)::char(44),
+    '2002', '1', now(), '22333444000199', 'Distribuidora Nova Ltda', 1, '<xml/>', v_itens);
+
+  select fornecedor_id into v_forn2 from recebimentos_nfe where id = (v_receb2->>'id')::uuid;
+  if v_forn1 <> v_forn2 then
+    raise exception 'FALHOU: segunda nota do mesmo CNPJ deveria reaproveitar o fornecedor';
+  end if;
+  if (select count(*) from fornecedores where cnpj = '22333444000199') <> 1 then
+    raise exception 'FALHOU: fornecedor duplicado para o mesmo CNPJ';
+  end if;
+
+  raise notice 'ok  fornecedor novo criado por CNPJ e reaproveitado na proxima nota';
+end $$;
+
+-- 10) Cancelamento nao toca em movimentacoes nem em lotes_estoque
+do $$
+declare
+  v_f1 uuid; v_prod uuid; v_receb jsonb; v_receb_id uuid; v_item uuid;
+  v_movs_antes bigint; v_movs_depois bigint;
+begin
+  select id into v_f1 from filiais where codigo = 'F01';
+  select id into v_prod from produtos where ean = '7891000100103';
+  select count(*) into v_movs_antes from movimentacoes;
+
+  v_receb := fn_iniciar_recebimento_nfe(v_f1, 'deposito', repeat('C', 44)::char(44),
+    '3001', '1', now(), null, null, 20.00, '<xml/>',
+    jsonb_build_array(jsonb_build_object(
+      'codigoProdutoNota', 'C1', 'eanNota', '7891000100103', 'descricaoNota', 'Trufa Ao Leite 20g',
+      'unidadeNota', 'UN', 'quantidadeNota', 5, 'valorUnitarioNota', 4.00, 'valorTotalNota', 20.00,
+      'loteSugerido', null, 'dataFabricacaoSugerida', null,
+      'dataValidadeSugerida', (current_date + 90)::text)));
+  v_receb_id := (v_receb->>'id')::uuid;
+
+  select id into v_item from recebimento_nfe_itens where recebimento_id = v_receb_id;
+  perform fn_atualizar_item_recebimento_nfe(v_item, v_prod, 'NFE-CANC', current_date + 90, 5, null);
+
+  perform fn_cancelar_recebimento_nfe(v_receb_id, 'teste automatizado');
+
+  select count(*) into v_movs_depois from movimentacoes;
+  if v_movs_depois <> v_movs_antes then
+    raise exception 'FALHOU: cancelar recebimento nao deveria gerar movimentacao';
+  end if;
+  if exists (select 1 from lotes_estoque where produto_id = v_prod and lote = 'NFE-CANC') then
+    raise exception 'FALHOU: cancelar recebimento nao deveria criar lote de estoque';
+  end if;
+  if (select status::text from recebimentos_nfe where id = v_receb_id) <> 'cancelado' then
+    raise exception 'FALHOU: status deveria ficar cancelado';
+  end if;
+
+  raise notice 'ok  cancelamento nao mexe em movimentacoes nem em lotes_estoque';
+end $$;
+
+-- 11) Edicao de item apos conclusao do recebimento e bloqueada
+do $$
+declare v_barrado boolean;
+begin
+  begin
+    perform fn_atualizar_item_recebimento_nfe(
+      current_setting('teste.item_casado1')::uuid, null, 'NOVO-LOTE', current_date + 1, 1, null);
+    v_barrado := false;
+  exception when check_violation then
+    v_barrado := true;
+  end;
+
+  if not v_barrado then
+    raise exception 'FALHOU: editar item de recebimento ja concluido deveria ser bloqueado';
+  end if;
+  raise notice 'ok  edicao de item apos conclusao do recebimento foi bloqueada';
+end $$;
+
 -- ------------------------------------------------------- contagem cega na RLS
 -- Um operador (sem inventario.aprovar) não pode ler inventario_itens direto.
 select set_config('teste.uid', '22222222-2222-2222-2222-222222222222', false);
