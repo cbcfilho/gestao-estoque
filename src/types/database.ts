@@ -31,6 +31,7 @@ export type MotivoMovimentacao =
   | "estorno";
 
 export type StatusTransferencia = "solicitada" | "em_transito" | "recebida" | "cancelada";
+export type StatusRecebimentoNfe = "em_conferencia" | "concluido" | "cancelado";
 export type TipoInventario = "geral" | "parcial";
 export type StatusInventario =
   | "aberto"

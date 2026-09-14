@@ -45,7 +45,7 @@ Rode a suíte contra um PostgreSQL local:
 .\supabase\tests\executar.ps1
 ```
 
-São 114 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
+São 139 verificações cobrindo FEFO, custo médio ponderado, saldo em trânsito,
 perda em trânsito, preservação do lote entre origem e destino da transferência,
 envio e recebimento parcial, consumo da cafeteria por lote escolhido, ordenação
 da lista de contagem do inventário, ajuste de inventário, RLS por filial,
@@ -66,8 +66,10 @@ relatório de movimentações (sku e preço de venda na view; o nome do arquivo 
 importação extraído da observação, sem confundir estorno com importação; totais
 do conjunto filtrado inteiro, que não mudam ao paginar; filtro de origem; o
 "sem estornos" tirando os dois lados do par; e a RLS por filial valendo pela
-função, que é security invoker de propósito). Se você mexeu no SQL e não rodou
-isso, não sabe se quebrou nada.
+função, que é security invoker de propósito) e o recebimento de produto via XML
+de NF-e (dedup por chave de acesso, casamento por EAN, divergência de
+quantidade, cadastro de produto novo sem `produtos.gerenciar`). Se você mexeu
+no SQL e não rodou isso, não sabe se quebrou nada.
 
 Atenção a um detalhe da suíte: a seção do cron faz `reset role`, e daí em diante
 tudo roda como `postgres` — que é superusuário e **ignora checagem de

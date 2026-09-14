@@ -1,8 +1,10 @@
+import { FileText } from "lucide-react";
 import type { Metadata } from "next";
 
 import { FormularioEntrada } from "./formulario";
+import { BotaoLink } from "@/components/ui/botao";
 import { CabecalhoPagina, EstadoVazio } from "@/components/ui/estados";
-import { exigirPermissao } from "@/lib/auth";
+import { exigirPermissao, temPermissao } from "@/lib/auth";
 import { obterFiliaisComLocais } from "@/lib/filiais";
 import { obterFilialAtiva } from "@/lib/filial";
 import { PERMISSOES } from "@/lib/permissoes";
@@ -30,6 +32,14 @@ export default async function PaginaEntrada() {
       <CabecalhoPagina
         titulo="Entrada de estoque"
         descricao="Recebimento de fornecedor, devolução ou entrada avulsa. O saldo entra no lote informado."
+        acao={
+          temPermissao(sessao, PERMISSOES.estoqueReceberNfe) ? (
+            <BotaoLink href="/estoque/entrada/nfe" variante="contorno" tamanho="sm">
+              <FileText className="size-4" />
+              Importar XML de nota
+            </BotaoLink>
+          ) : undefined
+        }
       />
 
       <FormularioEntrada
