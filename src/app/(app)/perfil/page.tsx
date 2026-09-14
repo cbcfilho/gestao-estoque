@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AlterarSenha } from "./alterar-senha";
 import { DoisFatores } from "./dois-fatores";
 import { NotificacoesPush } from "./notificacoes-push";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +62,8 @@ export default async function PaginaPerfil() {
           </dl>
         </CartaoConteudo>
       </Cartao>
+
+      <AlterarSenha />
 
       <DoisFatores fatores={fatores.ok ? fatores.dados : []} />
 
