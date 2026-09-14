@@ -1,20 +1,25 @@
 "use server";
 
+import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import type { Resultado } from "@/actions/estoque";
-import { exigirPermissaoAction } from "@/lib/auth";
+import { exigirPermissaoAction, exigirSessao } from "@/lib/auth";
 import { PERMISSOES } from "@/lib/permissoes";
 import { origemDoSite } from "@/lib/site";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServidor } from "@/lib/supabase/server";
 import { mensagemErro } from "@/lib/utils";
 
+/** Mesma regra da tela de redefinição de senha (actions/auth.ts). */
+const senhaForte = z.string().min(8, "A senha precisa ter pelo menos 8 caracteres.");
+
 const esquemaConvite = z.object({
   nome: z.string().trim().min(2, "Informe o nome do colaborador."),
   email: z.email("E-mail inválido."),
   perfil_chave: z.string().trim().min(1, "Escolha o perfil de acesso."),
+  senha: senhaForte,
   filiais: z.array(z.string().uuid()).default([]),
 });
 
@@ -74,6 +79,7 @@ export async function convidarUsuario(entrada: unknown): Promise<Resultado<Resul
     // em e-mail de confirmação que talvez nunca chegue.
     const criacao = await admin.auth.admin.createUser({
       email: dados.email,
+      password: dados.senha,
       email_confirm: true,
       user_metadata: { nome: dados.nome, perfil: dados.perfil_chave },
     });
@@ -180,6 +186,163 @@ export async function gerarLinkParaUsuario(email: string): Promise<Resultado<str
 
     return { ok: true, dados: await gerarLinkAcesso(email, origem) };
   } catch (erro) {
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+const esquemaSenhaGestor = z.object({
+  id: z.string().uuid(),
+  senha: senhaForte,
+});
+
+/**
+ * Define a senha de outro usuário.
+ *
+ * É a operação mais perigosa do sistema: quem define a senha de alguém passa a
+ * ter acesso integral àquela conta. Por isso as travas vêm todas ANTES de
+ * qualquer chamada com a service role — em especial a de escopo, que impede um
+ * gestor de filial assumir a conta de quem enxerga a rede inteira. Sem ela,
+ * `usuarios.gerenciar` viraria um caminho de escalonamento de privilégio.
+ */
+export async function definirSenhaUsuario(entrada: unknown): Promise<Resultado> {
+  try {
+    const sessao = await exigirPermissaoAction(PERMISSOES.usuariosGerenciar);
+    const dados = esquemaSenhaGestor.parse(entrada);
+
+    const supabase = await supabaseServidor();
+
+    const { data: alvo } = await supabase
+      .from("usuarios")
+      .select("id, nome, perfil:perfis(escopo)")
+      .eq("id", dados.id)
+      .maybeSingle();
+
+    if (!alvo) return { ok: false, erro: "Usuário não encontrado." };
+
+    const escopoAlvo = (alvo.perfil as unknown as { escopo: string } | null)?.escopo;
+
+    if (escopoAlvo === "global" && sessao.perfil.escopo !== "global") {
+      return {
+        ok: false,
+        erro: "Você não pode definir a senha de um usuário com acesso a todas as filiais.",
+      };
+    }
+
+    // Gestor de filial só mexe em quem divide filial com ele.
+    if (sessao.perfil.escopo !== "global") {
+      const { data: vinculos } = await supabase
+        .from("usuario_filiais")
+        .select("filial_id")
+        .eq("usuario_id", dados.id);
+
+      const minhas = new Set(sessao.filiais.map((f) => f.id));
+      const divide = (vinculos ?? []).some((v) => minhas.has(v.filial_id as string));
+
+      if (!divide) {
+        return { ok: false, erro: "Você só pode definir a senha de usuários das suas filiais." };
+      }
+    }
+
+    const admin = supabaseAdmin();
+
+    const { error } = await admin.auth.admin.updateUserById(dados.id, {
+      password: dados.senha,
+    });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    // Não dá para encerrar as sessões abertas da pessoa daqui: o `signOut` da
+    // API administrativa recebe o JWT da sessão, que não temos — só o id. Quem
+    // precisa cortar acesso na hora deve DESATIVAR o usuário na edição:
+    // `lib/auth.ts` recusa usuário inativo a cada requisição, valendo na hora e
+    // independente de sessão. A tela diz isso em vez de prometer o contrário.
+
+    // Só service_role escreve em log_auditoria (grants da 0010).
+    await admin.from("log_auditoria").insert({
+      usuario_id: sessao.id,
+      acao: "senha_definida_por_gestor",
+      tabela: "auth.users",
+      registro_id: dados.id,
+      dados_depois: { alvo_nome: alvo.nome, definida_por: sessao.nome },
+    });
+
+    return { ok: true, dados: undefined, mensagem: `Senha de ${alvo.nome} definida.` };
+  } catch (erro) {
+    if (erro instanceof z.ZodError) {
+      return { ok: false, erro: erro.issues[0]?.message ?? "Dados inválidos." };
+    }
+    return { ok: false, erro: mensagemErro(erro) };
+  }
+}
+
+const esquemaMinhaSenha = z
+  .object({
+    senhaAtual: z.string().min(1, "Informe a senha atual."),
+    novaSenha: senhaForte,
+    confirmacao: z.string(),
+  })
+  .refine((d) => d.novaSenha === d.confirmacao, {
+    message: "As senhas não conferem.",
+    path: ["confirmacao"],
+  })
+  .refine((d) => d.novaSenha !== d.senhaAtual, {
+    message: "A nova senha precisa ser diferente da atual.",
+    path: ["novaSenha"],
+  });
+
+/**
+ * Troca a senha da própria pessoa logada.
+ *
+ * Exige a senha atual de propósito: sem isso, um notebook destravado por um
+ * minuto vira troca de senha, e o dono perde a própria conta.
+ *
+ * A conferência usa um cliente descartável, e não o da sessão: chamar
+ * `signInWithPassword` no cliente da sessão trocaria os cookies em curso. Aqui
+ * o resultado é jogado fora — serve só para responder "essa senha confere?".
+ */
+export async function alterarMinhaSenha(entrada: unknown): Promise<Resultado> {
+  try {
+    const sessao = await exigirSessao();
+    const dados = esquemaMinhaSenha.parse(entrada);
+
+    const verificador = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } },
+    );
+
+    const conferencia = await verificador.auth.signInWithPassword({
+      email: sessao.email,
+      password: dados.senhaAtual,
+    });
+
+    if (conferencia.error) {
+      return { ok: false, erro: "Senha atual incorreta." };
+    }
+
+    // De propósito não se chama signOut() no verificador: o escopo padrão dele
+    // é GLOBAL e derrubaria a pessoa de todos os aparelhos — inclusive da
+    // sessão em que ela está trocando a senha agora. A sessão avulsa da
+    // conferência não é persistida em lugar nenhum e expira sozinha.
+
+    const supabase = await supabaseServidor();
+    const { error } = await supabase.auth.updateUser({ password: dados.novaSenha });
+
+    if (error) return { ok: false, erro: mensagemErro(error) };
+
+    const admin = supabaseAdmin();
+    await admin.from("log_auditoria").insert({
+      usuario_id: sessao.id,
+      acao: "senha_alterada_pelo_usuario",
+      tabela: "auth.users",
+      registro_id: sessao.id,
+    });
+
+    return { ok: true, dados: undefined, mensagem: "Senha alterada." };
+  } catch (erro) {
+    if (erro instanceof z.ZodError) {
+      return { ok: false, erro: erro.issues[0]?.message ?? "Dados inválidos." };
+    }
     return { ok: false, erro: mensagemErro(erro) };
   }
 }

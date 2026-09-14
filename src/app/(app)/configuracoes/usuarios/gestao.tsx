@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Pencil, UserPlus } from "lucide-react";
+import { KeyRound, Lock, Pencil, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
   atualizarUsuario,
   convidarUsuario,
+  definirSenhaUsuario,
   gerarLinkParaUsuario,
   type ResultadoConvite,
 } from "@/actions/usuarios";
@@ -48,6 +49,7 @@ export function GestaoUsuarios({
   const [pendente, iniciar] = useTransition();
   const [convidando, setConvidando] = useState(false);
   const [editando, setEditando] = useState<UsuarioListagem | null>(null);
+  const [definindoSenha, setDefinindoSenha] = useState<UsuarioListagem | null>(null);
   const [linkGerado, setLinkGerado] = useState<{ nome: string; link: string } | null>(null);
 
   return (
@@ -120,6 +122,15 @@ export function GestaoUsuarios({
                       <Botao
                         variante="fantasma"
                         tamanho="sm"
+                        onClick={() => setDefinindoSenha(usuario)}
+                        title={`Definir senha de ${usuario.nome}`}
+                        aria-label={`Definir senha de ${usuario.nome}`}
+                      >
+                        <Lock className="size-4" />
+                      </Botao>
+                      <Botao
+                        variante="fantasma"
+                        tamanho="sm"
                         disabled={pendente}
                         onClick={() =>
                           iniciar(async () => {
@@ -162,10 +173,20 @@ export function GestaoUsuarios({
                 },
               ]}
               acoes={
-                <Botao variante="contorno" tamanho="sm" onClick={() => setEditando(usuario)}>
-                  <Pencil className="size-4" />
-                  Editar
-                </Botao>
+                <>
+                  <Botao variante="contorno" tamanho="sm" onClick={() => setEditando(usuario)}>
+                    <Pencil className="size-4" />
+                    Editar
+                  </Botao>
+                  <Botao
+                    variante="contorno"
+                    tamanho="sm"
+                    onClick={() => setDefinindoSenha(usuario)}
+                  >
+                    <Lock className="size-4" />
+                    Senha
+                  </Botao>
+                </>
               }
             />
           ))}
@@ -211,7 +232,87 @@ export function GestaoUsuarios({
           }}
         />
       )}
+
+      {definindoSenha && (
+        <ModalSenha
+          usuario={definindoSenha}
+          ehVoce={definindoSenha.id === usuarioAtualId}
+          aoFechar={() => setDefinindoSenha(null)}
+          aoConcluir={() => {
+            setDefinindoSenha(null);
+            router.refresh();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function ModalSenha({
+  usuario,
+  ehVoce,
+  aoFechar,
+  aoConcluir,
+}: {
+  usuario: UsuarioListagem;
+  ehVoce: boolean;
+  aoFechar: () => void;
+  aoConcluir: () => void;
+}) {
+  const [pendente, iniciar] = useTransition();
+  const [senha, setSenha] = useState("");
+
+  function salvar() {
+    iniciar(async () => {
+      const r = await definirSenhaUsuario({ id: usuario.id, senha });
+
+      if (!r.ok) {
+        toast.error(r.erro);
+        return;
+      }
+
+      toast.success(r.mensagem);
+      setSenha("");
+      aoConcluir();
+    });
+  }
+
+  return (
+    <Modal
+      aberto
+      aoFechar={aoFechar}
+      titulo={`Definir senha de ${usuario.nome}`}
+      descricao={usuario.email}
+      tamanho="sm"
+      rodape={
+        <>
+          <Botao variante="contorno" onClick={aoFechar} disabled={pendente}>
+            Cancelar
+          </Botao>
+          <Botao onClick={salvar} carregando={pendente} disabled={senha.length < 8}>
+            Definir senha
+          </Botao>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <Campo
+          id="senha-do-usuario"
+          type="password"
+          rotulo="Nova senha"
+          autoComplete="new-password"
+          ajuda="Pelo menos 8 caracteres. Entregue à pessoa por um canal seguro."
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+        />
+
+        <Alerta tom="alerta">
+          {ehVoce
+            ? "A senha nova vale no próximo login. A sessão que você está usando agora continua aberta."
+            : `${usuario.nome} passa a entrar com esta senha e pode trocá-la depois, em Meu perfil. Se ela já estiver logada em algum aparelho, aquela sessão continua aberta — para cortar o acesso na hora, desative o usuário na edição.`}
+        </Alerta>
+      </div>
+    </Modal>
   );
 }
 
@@ -231,6 +332,7 @@ function ModalConvite({
   const [pendente, iniciar] = useTransition();
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
+  const [senha, setSenha] = useState("");
   const [perfilChave, setPerfilChave] = useState(perfis[0]?.chave ?? "operador");
   const [selecionadas, setSelecionadas] = useState<string[]>([]);
   const [criado, setCriado] = useState<ResultadoConvite | null>(null);
@@ -243,6 +345,7 @@ function ModalConvite({
       const r = await convidarUsuario({
         nome,
         email,
+        senha,
         perfil_chave: perfilChave,
         filiais: precisaFiliais ? selecionadas : [],
       });
@@ -260,6 +363,7 @@ function ModalConvite({
   function fecharEConcluir() {
     setNome("");
     setEmail("");
+    setSenha("");
     setSelecionadas([]);
     setCriado(null);
     aoConcluir();
@@ -272,25 +376,24 @@ function ModalConvite({
         aberto={aberto}
         aoFechar={fecharEConcluir}
         titulo="Acesso criado"
-        descricao={`${nome} já pode entrar assim que definir a senha.`}
+        descricao={`${nome} já pode entrar.`}
         tamanho="sm"
         rodape={<Botao onClick={fecharEConcluir}>Concluir</Botao>}
       >
         <div className="flex flex-col gap-4">
-          {criado.link ? (
-            <>
-              <Alerta tom="sucesso" titulo="Falta só a senha">
-                Envie o link abaixo para a pessoa — ao abrir, ela escolhe a própria senha
-                e já cai dentro do sistema.
-              </Alerta>
+          <Alerta tom="sucesso" titulo="Pronto para usar">
+            Passe a <strong>{email}</strong> e a senha que você acabou de definir. A pessoa
+            pode trocar essa senha quando quiser, em Meu perfil.
+          </Alerta>
 
+          {criado.link && (
+            <>
+              <p className="text-sm texto-suave">
+                Se preferir que ela mesma escolha a senha, envie este link em vez da senha —
+                ao abrir, ela define a própria e já entra.
+              </p>
               <LinkAcesso link={criado.link} nome={nome} />
             </>
-          ) : (
-            <Alerta tom="alerta" titulo="Usuário criado, link pendente">
-              O acesso foi criado, mas o link não pôde ser gerado agora. Gere pelo botão
-              de chave na linha da pessoa, na lista de usuários.
-            </Alerta>
           )}
         </div>
       </Modal>
@@ -302,7 +405,7 @@ function ModalConvite({
       aberto={aberto}
       aoFechar={aoFechar}
       titulo="Convidar colaborador"
-      descricao="Você envia o link gerado; a pessoa define a própria senha."
+      descricao="Você define a senha inicial e entrega à pessoa."
       rodape={
         <>
           <Botao variante="contorno" onClick={aoFechar} disabled={pendente}>
@@ -329,6 +432,16 @@ function ModalConvite({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoCapitalize="none"
+          obrigatorio
+        />
+        <Campo
+          id="senha"
+          type="password"
+          rotulo="Senha de acesso"
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+          autoComplete="new-password"
+          ajuda="Pelo menos 8 caracteres. É com ela que a pessoa entra; depois ela pode trocar em Meu perfil."
           obrigatorio
         />
         <Selecao
