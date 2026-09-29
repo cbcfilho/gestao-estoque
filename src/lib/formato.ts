@@ -131,6 +131,21 @@ export function hojeISO() {
   return paraInputDate(new Date());
 }
 
+/**
+ * Códigos do produto numa linha: "EAN 789… · SKU ABC".
+ *
+ * Os rótulos não são decoração: dois números lado a lado sem dizer qual é
+ * qual confundem mais do que ajudam. Omite o que estiver vazio.
+ */
+export function codigosProduto(produto: { ean: string | null; sku: string | null }) {
+  const partes = [
+    produto.ean ? `EAN ${produto.ean}` : null,
+    produto.sku ? `SKU ${produto.sku}` : null,
+  ].filter(Boolean);
+
+  return partes.length > 0 ? partes.join(" · ") : "Sem código";
+}
+
 /* -------------------------------------------------------------------------- */
 /* Rótulos                                                                     */
 /* -------------------------------------------------------------------------- */

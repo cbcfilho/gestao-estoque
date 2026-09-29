@@ -17,7 +17,7 @@ import {
   Tr,
 } from "@/components/ui/tabela";
 import { exigirSessao } from "@/lib/auth";
-import { LABEL_UNIDADE, moeda, numero } from "@/lib/formato";
+import { LABEL_UNIDADE, codigosProduto, moeda, numero } from "@/lib/formato";
 import { PERMISSOES } from "@/lib/permissoes";
 import { supabaseServidor } from "@/lib/supabase/server";
 import type { Categoria, Produto } from "@/types/database";
@@ -142,7 +142,7 @@ export default async function PaginaProdutos({
                         {produto.nome}
                       </Link>
                       <span className="block text-sm texto-suave">
-                        {produto.ean ?? "sem código de barras"}
+                        {codigosProduto(produto)}
                       </span>
                     </Td>
                     <Td>{produto.categoria?.nome ?? "—"}</Td>
@@ -168,11 +168,16 @@ export default async function PaginaProdutos({
               <Link key={produto.id} href={`/produtos/${produto.id}`}>
                 <ItemCartao
                   titulo={produto.nome}
-                  subtitulo={`${produto.ean ?? "sem EAN"} · ${produto.categoria?.nome ?? "sem categoria"}`}
+                  subtitulo={produto.categoria?.nome ?? "sem categoria"}
                   direita={
                     !produto.ativo ? <Badge tom="neutro">Inativo</Badge> : undefined
                   }
                   linhas={[
+                    // EAN e SKU como linhas próprias, não no subtítulo: aquele
+                    // campo é truncado em uma linha só, e no celular cortaria
+                    // justamente o segundo código.
+                    { rotulo: "EAN", valor: produto.ean ?? "—" },
+                    { rotulo: "SKU", valor: produto.sku ?? "—" },
                     { rotulo: "Custo", valor: moeda(produto.valor_custo) },
                     { rotulo: "Venda", valor: moeda(produto.valor_venda) },
                     {

@@ -14,6 +14,7 @@ import {
   LABEL_MOTIVO,
   LABEL_TIPO_MOV,
   LABEL_UNIDADE,
+  codigosProduto,
   data as formatarData,
   dataHora,
   moeda,
@@ -100,7 +101,7 @@ export default async function PaginaProduto({ params }: { params: Promise<{ id: 
         titulo={produto.nome}
         descricao={
           <span className="flex flex-wrap items-center gap-2">
-            <span>{produto.ean ? `EAN ${produto.ean}` : "Sem código de barras"}</span>
+            <span>{codigosProduto(produto)}</span>
             {produto.categoria && <Badge tom="cacau">{produto.categoria.nome}</Badge>}
             {!produto.ativo && <Badge tom="neutro">Inativo</Badge>}
             {produto.insumo_cafeteria && <Badge tom="dourado">Insumo de cafeteria</Badge>}
